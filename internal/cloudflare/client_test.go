@@ -333,7 +333,7 @@ func TestValidateRecordName(t *testing.T) {
 	cfg := &config.Config{
 		CloudflareAPIToken: "test-token",
 		CloudflareZoneID:   "test-zone-id",
-		Domain:             "zone33.mcp-server-1.com",
+		Domain:             "home.example.com",
 	}
 
 	client, err := New(cfg)
@@ -347,20 +347,20 @@ func TestValidateRecordName(t *testing.T) {
 		wantError bool
 	}{
 		// Valid records - within domain scope
-		{"exact domain match", "zone33.mcp-server-1.com", false},
-		{"subdomain", "app.zone33.mcp-server-1.com", false},
-		{"nested subdomain", "api.v1.zone33.mcp-server-1.com", false},
-		{"wildcard subdomain", "*.zone33.mcp-server-1.com", false},
-		{"acme challenge", "_acme-challenge.zone33.mcp-server-1.com", false},
-		{"uppercase (normalized)", "APP.ZONE33.MCP-SERVER-1.COM", false},
-		{"trailing dot", "zone33.mcp-server-1.com.", false},
+		{"exact domain match", "home.example.com", false},
+		{"subdomain", "app.home.example.com", false},
+		{"nested subdomain", "api.v1.home.example.com", false},
+		{"wildcard subdomain", "*.home.example.com", false},
+		{"acme challenge", "_acme-challenge.home.example.com", false},
+		{"uppercase (normalized)", "APP.HOME.EXAMPLE.COM", false},
+		{"trailing dot", "home.example.com.", false},
 
 		// Invalid records - outside domain scope (SECURITY)
-		{"different domain", "example.com", true},
-		{"parent domain", "mcp-server-1.com", true},
-		{"sibling subdomain", "zone34.mcp-server-1.com", true},
-		{"prefix attack", "fakezone33.mcp-server-1.com", true},
-		{"suffix attack", "zone33.mcp-server-1.com.evil.com", true},
+		{"different domain", "other.org", true},
+		{"parent domain", "example.com", true},
+		{"sibling subdomain", "work.example.com", true},
+		{"prefix attack", "fakehome.example.com", true},
+		{"suffix attack", "home.example.com.evil.com", true},
 		{"completely different", "google.com", true},
 		{"empty string", "", true},
 	}

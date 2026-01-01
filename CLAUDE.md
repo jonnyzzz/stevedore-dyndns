@@ -271,7 +271,31 @@ docker-compose up
 
 ## Security Considerations
 
+### API Token Permissions
 - Cloudflare API token should have minimal permissions (Zone:DNS:Edit only)
+- Token should be scoped to specific zone when possible
+
+### Domain-Scoping Security Assertions
+The Cloudflare client includes built-in security assertions that prevent DNS modifications outside the configured domain:
+
+```go
+// All DNS operations go through validateRecordName() which ensures:
+// 1. Record name equals the configured domain, OR
+// 2. Record name is a subdomain of the configured domain
+
+// Examples for DOMAIN=home.example.com:
+// ALLOWED: home.example.com, app.home.example.com, *.home.example.com
+// BLOCKED: example.com, other.example.com, evil.com
+```
+
+This prevents:
+- Accidental modification of parent domain records
+- Attacks via prefix confusion (e.g., `fakehome.example.com`)
+- Attacks via suffix confusion (e.g., `home.example.com.evil.com`)
+
+The validation runs on every `UpdateRecord` and `DeleteRecord` call, and failures are logged with "SECURITY" prefix for easy monitoring.
+
+### Other Security Measures
 - Let's Encrypt certificates stored in `${STEVEDORE_DATA}/caddy`
 - No secrets stored in repository
 - Health endpoint is unauthenticated (by design, for Stevedore monitoring)
