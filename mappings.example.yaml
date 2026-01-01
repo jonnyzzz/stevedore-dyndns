@@ -1,0 +1,57 @@
+# Stevedore DynDNS - Service Mappings
+# Copy this file to mappings.yaml and customize
+#
+# The mapping table defines how subdomains route to backend services.
+# All traffic arrives at *.yourdomain.com and is routed based on subdomain.
+
+mappings:
+  # Example 1: Route to a specific host:port
+  # Use this when you know the exact IP/hostname and port
+  - subdomain: grafana
+    target: "192.168.1.100:3000"
+    options:
+      health_path: /api/health
+
+  # Example 2: Route to Docker Compose service (Stevedore deployment)
+  # The compose_project is typically "stevedore-<deployment-name>"
+  # The compose_service is the service name from docker-compose.yaml
+  - subdomain: myapp
+    compose_project: stevedore-myapp
+    compose_service: web
+    port: 8080
+    options:
+      health_path: /healthz
+
+  # Example 3: Route to Docker container by name
+  # Useful for standalone containers not managed by Compose
+  - subdomain: api
+    container: my-api-container
+    port: 8000
+
+  # Example 4: Route with WebSocket support
+  # Essential for streaming, live updates, or real-time applications
+  - subdomain: stream
+    target: "media-server:8096"
+    options:
+      websocket: true
+      buffer_requests: false  # Disable buffering for streaming
+
+  # Example 5: Route to Jellyfin/Plex media server
+  - subdomain: media
+    target: "jellyfin:8096"
+    options:
+      websocket: true
+      buffer_requests: false
+      health_path: /health
+
+  # Example 6: Route to Home Assistant
+  - subdomain: home
+    target: "homeassistant:8123"
+    options:
+      websocket: true
+
+  # Example 7: Route to internal documentation
+  - subdomain: docs
+    compose_project: stevedore-docs
+    compose_service: mkdocs
+    port: 8000
