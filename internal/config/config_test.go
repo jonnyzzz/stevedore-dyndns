@@ -1,0 +1,284 @@
+package config
+
+import (
+	"os"
+	"testing"
+	"time"
+)
+
+func TestLoad_RequiredFields(t *testing.T) {
+	// Clear all environment variables first
+	clearEnv()
+
+	tests := []struct {
+		name        string
+		env         map[string]string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "missing all required fields",
+			env:         map[string]string{},
+			wantErr:     true,
+			errContains: "CLOUDFLARE_API_TOKEN is required",
+		},
+		{
+			name: "missing zone ID",
+			env: map[string]string{
+				"CLOUDFLARE_API_TOKEN": "test-token",
+			},
+			wantErr:     true,
+			errContains: "CLOUDFLARE_ZONE_ID is required",
+		},
+		{
+			name: "missing domain",
+			env: map[string]string{
+				"CLOUDFLARE_API_TOKEN": "test-token",
+				"CLOUDFLARE_ZONE_ID":   "test-zone",
+			},
+			wantErr:     true,
+			errContains: "DOMAIN is required",
+		},
+		{
+			name: "missing ACME email",
+			env: map[string]string{
+				"CLOUDFLARE_API_TOKEN": "test-token",
+				"CLOUDFLARE_ZONE_ID":   "test-zone",
+				"DOMAIN":               "example.com",
+			},
+			wantErr:     true,
+			errContains: "ACME_EMAIL is required",
+		},
+		{
+			name: "all required fields present",
+			env: map[string]string{
+				"CLOUDFLARE_API_TOKEN": "test-token",
+				"CLOUDFLARE_ZONE_ID":   "test-zone",
+				"DOMAIN":               "example.com",
+				"ACME_EMAIL":           "test@example.com",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnv()
+			for k, v := range tt.env {
+				os.Setenv(k, v)
+			}
+
+			cfg, err := Load()
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Load() expected error containing %q, got nil", tt.errContains)
+					return
+				}
+				if tt.errContains != "" && err.Error() != tt.errContains {
+					t.Errorf("Load() error = %v, want error containing %q", err, tt.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Load() unexpected error: %v", err)
+					return
+				}
+				if cfg == nil {
+					t.Error("Load() returned nil config")
+				}
+			}
+		})
+	}
+}
+
+func TestLoad_DefaultValues(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+
+	// Check defaults
+	if cfg.FritzboxHost != "192.168.178.1" {
+		t.Errorf("FritzboxHost = %q, want %q", cfg.FritzboxHost, "192.168.178.1")
+	}
+	if cfg.LogLevel != "info" {
+		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "info")
+	}
+	if cfg.IPCheckInterval != 5*time.Minute {
+		t.Errorf("IPCheckInterval = %v, want %v", cfg.IPCheckInterval, 5*time.Minute)
+	}
+}
+
+func TestLoad_CustomValues(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+
+	os.Setenv("FRITZBOX_HOST", "192.168.1.1")
+	os.Setenv("FRITZBOX_USER", "admin")
+	os.Setenv("FRITZBOX_PASSWORD", "secret")
+	os.Setenv("MANUAL_IPV4", "1.2.3.4")
+	os.Setenv("MANUAL_IPV6", "2001:db8::1")
+	os.Setenv("IP_CHECK_INTERVAL", "10m")
+	os.Setenv("LOG_LEVEL", "debug")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+
+	if cfg.FritzboxHost != "192.168.1.1" {
+		t.Errorf("FritzboxHost = %q, want %q", cfg.FritzboxHost, "192.168.1.1")
+	}
+	if cfg.FritzboxUser != "admin" {
+		t.Errorf("FritzboxUser = %q, want %q", cfg.FritzboxUser, "admin")
+	}
+	if cfg.FritzboxPassword != "secret" {
+		t.Errorf("FritzboxPassword = %q, want %q", cfg.FritzboxPassword, "secret")
+	}
+	if cfg.ManualIPv4 != "1.2.3.4" {
+		t.Errorf("ManualIPv4 = %q, want %q", cfg.ManualIPv4, "1.2.3.4")
+	}
+	if cfg.ManualIPv6 != "2001:db8::1" {
+		t.Errorf("ManualIPv6 = %q, want %q", cfg.ManualIPv6, "2001:db8::1")
+	}
+	if cfg.IPCheckInterval != 10*time.Minute {
+		t.Errorf("IPCheckInterval = %v, want %v", cfg.IPCheckInterval, 10*time.Minute)
+	}
+	if cfg.LogLevel != "debug" {
+		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "debug")
+	}
+}
+
+func TestLoad_InvalidIPCheckInterval(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("IP_CHECK_INTERVAL", "invalid")
+
+	_, err := Load()
+	if err == nil {
+		t.Error("Load() expected error for invalid IP_CHECK_INTERVAL, got nil")
+	}
+}
+
+func TestConfig_UseManualIP(t *testing.T) {
+	tests := []struct {
+		name       string
+		manualIPv4 string
+		manualIPv6 string
+		want       bool
+	}{
+		{"no manual IPs", "", "", false},
+		{"only IPv4", "1.2.3.4", "", true},
+		{"only IPv6", "", "2001:db8::1", true},
+		{"both IPs", "1.2.3.4", "2001:db8::1", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				ManualIPv4: tt.manualIPv4,
+				ManualIPv6: tt.manualIPv6,
+			}
+			if got := cfg.UseManualIP(); got != tt.want {
+				t.Errorf("UseManualIP() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     *Config
+		wantErr bool
+	}{
+		{
+			name: "valid config",
+			cfg: &Config{
+				CloudflareAPIToken: "token",
+				CloudflareZoneID:   "zone",
+				Domain:             "example.com",
+				AcmeEmail:          "test@example.com",
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing token",
+			cfg: &Config{
+				CloudflareZoneID: "zone",
+				Domain:           "example.com",
+				AcmeEmail:        "test@example.com",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing zone",
+			cfg: &Config{
+				CloudflareAPIToken: "token",
+				Domain:             "example.com",
+				AcmeEmail:          "test@example.com",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing domain",
+			cfg: &Config{
+				CloudflareAPIToken: "token",
+				CloudflareZoneID:   "zone",
+				AcmeEmail:          "test@example.com",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing email",
+			cfg: &Config{
+				CloudflareAPIToken: "token",
+				CloudflareZoneID:   "zone",
+				Domain:             "example.com",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// Helper functions
+
+func clearEnv() {
+	envVars := []string{
+		"CLOUDFLARE_API_TOKEN",
+		"CLOUDFLARE_ZONE_ID",
+		"DOMAIN",
+		"ACME_EMAIL",
+		"FRITZBOX_HOST",
+		"FRITZBOX_USER",
+		"FRITZBOX_PASSWORD",
+		"MANUAL_IPV4",
+		"MANUAL_IPV6",
+		"IP_CHECK_INTERVAL",
+		"LOG_LEVEL",
+		"DYNDNS_DATA",
+		"DYNDNS_LOGS",
+	}
+	for _, v := range envVars {
+		os.Unsetenv(v)
+	}
+}
+
+func setRequiredEnv() {
+	os.Setenv("CLOUDFLARE_API_TOKEN", "test-token")
+	os.Setenv("CLOUDFLARE_ZONE_ID", "test-zone")
+	os.Setenv("DOMAIN", "example.com")
+	os.Setenv("ACME_EMAIL", "test@example.com")
+}

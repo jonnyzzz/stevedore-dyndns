@@ -66,8 +66,8 @@ This service acts as an ingress controller for Stevedore-managed services, provi
 | `DOMAIN` | Yes | Base domain (e.g., `example.com`) |
 | `ACME_EMAIL` | Yes | Email for Let's Encrypt notifications |
 | `FRITZBOX_HOST` | No | Fritzbox IP (default: `192.168.178.1`) |
-| `FRITZBOX_USER` | No | Fritzbox username (if auth required) |
-| `FRITZBOX_PASSWORD` | No | Fritzbox password (if auth required) |
+| `FRITZBOX_USER` | No | Fritzbox username (only if router requires auth) |
+| `FRITZBOX_PASSWORD` | No | Fritzbox password (only if router requires auth) |
 | `MANUAL_IPV4` | No | Manual IPv4 override |
 | `MANUAL_IPV6` | No | Manual IPv6 override |
 | `IP_CHECK_INTERVAL` | No | IP check interval (default: `5m`) |
