@@ -327,3 +327,99 @@ func BenchmarkClient_CacheWrite(b *testing.B) {
 		client.cacheMu.Unlock()
 	}
 }
+
+// TestValidateRecordName tests the domain-scoping security assertion
+func TestValidateRecordName(t *testing.T) {
+	cfg := &config.Config{
+		CloudflareAPIToken: "test-token",
+		CloudflareZoneID:   "test-zone-id",
+		Domain:             "zone33.mcp-server-1.com",
+	}
+
+	client, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		record    string
+		wantError bool
+	}{
+		// Valid records - within domain scope
+		{"exact domain match", "zone33.mcp-server-1.com", false},
+		{"subdomain", "app.zone33.mcp-server-1.com", false},
+		{"nested subdomain", "api.v1.zone33.mcp-server-1.com", false},
+		{"wildcard subdomain", "*.zone33.mcp-server-1.com", false},
+		{"acme challenge", "_acme-challenge.zone33.mcp-server-1.com", false},
+		{"uppercase (normalized)", "APP.ZONE33.MCP-SERVER-1.COM", false},
+		{"trailing dot", "zone33.mcp-server-1.com.", false},
+
+		// Invalid records - outside domain scope (SECURITY)
+		{"different domain", "example.com", true},
+		{"parent domain", "mcp-server-1.com", true},
+		{"sibling subdomain", "zone34.mcp-server-1.com", true},
+		{"prefix attack", "fakezone33.mcp-server-1.com", true},
+		{"suffix attack", "zone33.mcp-server-1.com.evil.com", true},
+		{"completely different", "google.com", true},
+		{"empty string", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := client.validateRecordName(tt.record)
+			if tt.wantError && err == nil {
+				t.Errorf("validateRecordName(%q) expected error, got nil", tt.record)
+			}
+			if !tt.wantError && err != nil {
+				t.Errorf("validateRecordName(%q) unexpected error: %v", tt.record, err)
+			}
+			if tt.wantError && err != nil && !strings.Contains(err.Error(), "SECURITY") {
+				t.Errorf("validateRecordName(%q) error should contain 'SECURITY': %v", tt.record, err)
+			}
+		})
+	}
+}
+
+// TestValidateRecordName_DifferentDomains tests validation with various domain configurations
+func TestValidateRecordName_DifferentDomains(t *testing.T) {
+	testCases := []struct {
+		domain      string
+		validNames  []string
+		invalidNames []string
+	}{
+		{
+			domain:      "example.com",
+			validNames:  []string{"example.com", "sub.example.com", "*.example.com"},
+			invalidNames: []string{"example.org", "notexample.com", "com"},
+		},
+		{
+			domain:      "sub.example.com",
+			validNames:  []string{"sub.example.com", "app.sub.example.com"},
+			invalidNames: []string{"example.com", "other.example.com"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run("domain:"+tc.domain, func(t *testing.T) {
+			cfg := &config.Config{
+				CloudflareAPIToken: "test-token",
+				CloudflareZoneID:   "test-zone-id",
+				Domain:             tc.domain,
+			}
+			client, _ := New(cfg)
+
+			for _, name := range tc.validNames {
+				if err := client.validateRecordName(name); err != nil {
+					t.Errorf("domain %q: validateRecordName(%q) should be valid: %v", tc.domain, name, err)
+				}
+			}
+
+			for _, name := range tc.invalidNames {
+				if err := client.validateRecordName(name); err == nil {
+					t.Errorf("domain %q: validateRecordName(%q) should be invalid", tc.domain, name)
+				}
+			}
+		})
+	}
+}

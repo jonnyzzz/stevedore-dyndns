@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/cloudflare/cloudflare-go"
@@ -36,8 +37,29 @@ func New(cfg *config.Config) (*Client, error) {
 	}, nil
 }
 
+// validateRecordName ensures the record name is within the configured domain scope.
+// This is a safety assertion to prevent accidental modifications to records outside the domain.
+func (c *Client) validateRecordName(name string) error {
+	// Normalize both to lowercase for comparison
+	normalizedName := strings.ToLower(strings.TrimSuffix(name, "."))
+	normalizedDomain := strings.ToLower(strings.TrimSuffix(c.domain, "."))
+
+	// Record must either be the domain itself or a subdomain of it
+	if normalizedName != normalizedDomain && !strings.HasSuffix(normalizedName, "."+normalizedDomain) {
+		return fmt.Errorf("SECURITY: record name %q is outside configured domain %q - refusing to modify", name, c.domain)
+	}
+
+	slog.Debug("Record name validation passed", "name", name, "domain", c.domain)
+	return nil
+}
+
 // UpdateRecord creates or updates a DNS record
 func (c *Client) UpdateRecord(ctx context.Context, name string, recordType string, content string) error {
+	// SECURITY ASSERTION: Ensure we only modify records within our domain
+	if err := c.validateRecordName(name); err != nil {
+		return err
+	}
+
 	cacheKey := fmt.Sprintf("%s:%s", name, recordType)
 
 	// Check cache for existing record ID
@@ -102,6 +124,11 @@ func (c *Client) UpdateRecord(ctx context.Context, name string, recordType strin
 
 // DeleteRecord removes a DNS record
 func (c *Client) DeleteRecord(ctx context.Context, name string, recordType string) error {
+	// SECURITY ASSERTION: Ensure we only delete records within our domain
+	if err := c.validateRecordName(name); err != nil {
+		return err
+	}
+
 	cacheKey := fmt.Sprintf("%s:%s", name, recordType)
 
 	c.cacheMu.RLock()
