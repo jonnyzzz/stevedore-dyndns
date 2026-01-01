@@ -29,10 +29,11 @@ services:
       - STEVEDORE_DEPLOYMENT=${STEVEDORE_DEPLOYMENT:-dyndns}
 
       # Required - set via: stevedore param set dyndns <KEY> <value>
-      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:?Set via stevedore param set}
-      - CLOUDFLARE_ZONE_ID=${CLOUDFLARE_ZONE_ID:?Set via stevedore param set}
-      - DOMAIN=${DOMAIN:?Set via stevedore param set}
-      - ACME_EMAIL=${ACME_EMAIL:?Set via stevedore param set}
+      # Note: Use pass-through syntax for stevedore compatibility
+      - CLOUDFLARE_API_TOKEN
+      - CLOUDFLARE_ZONE_ID
+      - DOMAIN
+      - ACME_EMAIL
 
       # Optional - Fritzbox configuration (works without auth on most routers)
       - FRITZBOX_HOST=${FRITZBOX_HOST:-192.168.178.1}
