@@ -34,6 +34,7 @@ type Config struct {
 	// Paths
 	DataDir      string
 	LogsDir      string
+	SharedDir    string
 	MappingsFile string
 	CaddyFile    string
 }
@@ -53,6 +54,7 @@ func Load() (*Config, error) {
 		LogLevel:           getEnvDefault("LOG_LEVEL", "info"),
 		DataDir:            getEnvDefault("DYNDNS_DATA", "/data"),
 		LogsDir:            getEnvDefault("DYNDNS_LOGS", "/var/log/dyndns"),
+		SharedDir:          getEnvDefault("STEVEDORE_SHARED", "/shared"),
 	}
 
 	// Parse IP check interval
@@ -63,8 +65,23 @@ func Load() (*Config, error) {
 	}
 	cfg.IPCheckInterval = interval
 
-	// Set derived paths
-	cfg.MappingsFile = cfg.DataDir + "/mappings.yaml"
+	// Set derived paths - prefer shared directory for cross-deployment communication
+	// Check shared dir first (Stevedore standard), fallback to data dir
+	sharedMappings := cfg.SharedDir + "/dyndns-mappings.yaml"
+	dataMappings := cfg.DataDir + "/mappings.yaml"
+
+	// Use explicit MAPPINGS_FILE if set, otherwise prefer shared location
+	if mappingsFile := os.Getenv("MAPPINGS_FILE"); mappingsFile != "" {
+		cfg.MappingsFile = mappingsFile
+	} else if fileExists(sharedMappings) {
+		cfg.MappingsFile = sharedMappings
+	} else if fileExists(dataMappings) {
+		cfg.MappingsFile = dataMappings
+	} else {
+		// Default to shared location for new installations
+		cfg.MappingsFile = sharedMappings
+	}
+
 	cfg.CaddyFile = "/etc/caddy/Caddyfile"
 
 	// Validate required fields
@@ -102,4 +119,9 @@ func getEnvDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

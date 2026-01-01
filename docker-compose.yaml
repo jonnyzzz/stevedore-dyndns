@@ -1,50 +1,77 @@
+# Stevedore DynDNS - Docker Compose for Stevedore Deployment
+#
+# Deploy with: stevedore repo add dyndns <git-url>
+#              stevedore deploy sync dyndns
+#              stevedore deploy up dyndns
+#
+# Configure secrets with:
+#   stevedore param set dyndns CLOUDFLARE_API_TOKEN "your-token"
+#   stevedore param set dyndns CLOUDFLARE_ZONE_ID "your-zone-id"
+#   stevedore param set dyndns DOMAIN "example.com"
+#   stevedore param set dyndns ACME_EMAIL "admin@example.com"
+
 services:
   dyndns:
     build: .
     image: stevedore-dyndns:latest
-    container_name: stevedore-dyndns
     restart: unless-stopped
+
+    # Ports for HTTPS reverse proxy
+    # Note: When using network_mode: host, ports are ignored
     ports:
       - "80:80"       # HTTP (redirect to HTTPS)
       - "443:443"     # HTTPS
       - "443:443/udp" # HTTP/3 (QUIC)
-      # Health endpoint only on localhost for security
-      - "127.0.0.1:8080:8080"
+      - "8080:8080"   # Health/status endpoint (internal)
+
     environment:
-      # Required - set via stevedore param or .env
-      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
-      - CLOUDFLARE_ZONE_ID=${CLOUDFLARE_ZONE_ID}
-      - DOMAIN=${DOMAIN}
-      - ACME_EMAIL=${ACME_EMAIL}
-      # Optional - Fritzbox configuration
+      # Stevedore-provided variables
+      - STEVEDORE_DEPLOYMENT=${STEVEDORE_DEPLOYMENT:-dyndns}
+
+      # Required - set via: stevedore param set dyndns <KEY> <value>
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:?Set via stevedore param set}
+      - CLOUDFLARE_ZONE_ID=${CLOUDFLARE_ZONE_ID:?Set via stevedore param set}
+      - DOMAIN=${DOMAIN:?Set via stevedore param set}
+      - ACME_EMAIL=${ACME_EMAIL:?Set via stevedore param set}
+
+      # Optional - Fritzbox configuration (works without auth on most routers)
       - FRITZBOX_HOST=${FRITZBOX_HOST:-192.168.178.1}
       - FRITZBOX_USER=${FRITZBOX_USER:-}
       - FRITZBOX_PASSWORD=${FRITZBOX_PASSWORD:-}
+
       # Optional - Manual IP override (disables auto-detection)
       - MANUAL_IPV4=${MANUAL_IPV4:-}
       - MANUAL_IPV6=${MANUAL_IPV6:-}
+
       # Optional - Tuning
       - IP_CHECK_INTERVAL=${IP_CHECK_INTERVAL:-5m}
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      # Stevedore integration
-      - STEVEDORE_DATA=${STEVEDORE_DATA:-/data}
-      - STEVEDORE_LOGS=${STEVEDORE_LOGS:-/var/log/dyndns}
+
+      # Internal paths (set by Stevedore or use defaults for local dev)
+      - DYNDNS_DATA=${STEVEDORE_DATA:-./data}
+      - DYNDNS_LOGS=${STEVEDORE_LOGS:-./logs}
+
     volumes:
-      # Persistent data (certificates, state)
+      # Persistent data - certificates, DNS state
+      # Stevedore provides: /opt/stevedore/deployments/dyndns/data
       - ${STEVEDORE_DATA:-./data}:/data
-      # Logs
+
+      # Logs directory
+      # Stevedore provides: /opt/stevedore/deployments/dyndns/logs
       - ${STEVEDORE_LOGS:-./logs}:/var/log/dyndns
-      # Mapping configuration
-      - ${STEVEDORE_DATA:-./data}/mappings.yaml:/data/mappings.yaml:ro
-      # NOTE: Docker socket NOT mounted by default for security
-      # Uncomment if you need container discovery (v2 feature):
-      # - /var/run/docker.sock:/var/run/docker.sock:ro
+
+      # Shared storage for cross-deployment communication
+      # Other deployments can register themselves here
+      # Stevedore provides: /opt/stevedore/shared
+      - ${STEVEDORE_SHARED:-./shared}:/shared
+
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
+
     # Security hardening
     security_opt:
       - no-new-privileges:true
@@ -52,20 +79,26 @@ services:
       - ALL
     cap_add:
       - NET_BIND_SERVICE  # Required for binding to ports 80/443
-    # Use host network for Fritzbox TR-064/UPnP discovery
-    # If you don't need auto IP detection, use bridge mode instead
-    network_mode: host
-    # NOTE: When using network_mode: host, the 'ports' section is ignored
-    # and all container ports are directly exposed on the host.
-    # For production, consider bridge mode with manual IP configuration:
-    #
-    # Alternative bridge mode configuration:
-    # network_mode: bridge
-    # networks:
-    #   - stevedore
 
-# Uncomment for bridge mode deployment
+    # Network mode options:
+    #
+    # Option 1: Host network (RECOMMENDED for Fritzbox auto-detection)
+    # - Required for TR-064/UPnP IP detection from local router
+    # - All ports directly exposed on host (ports: section ignored)
+    # - Simple setup, works out of the box
+    network_mode: host
+
+    # Option 2: Bridge network (use with MANUAL_IPV4/MANUAL_IPV6)
+    # Uncomment below and comment out network_mode: host
+    # networks:
+    #   - default
+
+    # labels for potential future service discovery
+    labels:
+      - "stevedore.dyndns.enabled=true"
+      - "stevedore.dyndns.role=ingress"
+
+# Network for bridge mode (uncomment if not using host network)
 # networks:
-#   stevedore:
-#     external: true
-#     name: stevedore
+#   default:
+#     name: stevedore-dyndns

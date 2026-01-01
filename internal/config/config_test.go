@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -253,6 +254,136 @@ func TestConfig_Validate(t *testing.T) {
 	}
 }
 
+func TestLoad_SharedDir(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+
+	// Default shared dir
+	if cfg.SharedDir != "/shared" {
+		t.Errorf("SharedDir = %q, want %q", cfg.SharedDir, "/shared")
+	}
+
+	// Custom shared dir
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("STEVEDORE_SHARED", "/opt/stevedore/shared")
+
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+
+	if cfg.SharedDir != "/opt/stevedore/shared" {
+		t.Errorf("SharedDir = %q, want %q", cfg.SharedDir, "/opt/stevedore/shared")
+	}
+}
+
+func TestLoad_MappingsFilePath(t *testing.T) {
+	// Create temp directories for testing
+	tmpDir := t.TempDir()
+	sharedDir := filepath.Join(tmpDir, "shared")
+	dataDir := filepath.Join(tmpDir, "data")
+	os.MkdirAll(sharedDir, 0755)
+	os.MkdirAll(dataDir, 0755)
+
+	t.Run("explicit MAPPINGS_FILE takes priority", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("MAPPINGS_FILE", "/custom/path/mappings.yaml")
+		os.Setenv("STEVEDORE_SHARED", sharedDir)
+		os.Setenv("DYNDNS_DATA", dataDir)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() unexpected error: %v", err)
+		}
+
+		if cfg.MappingsFile != "/custom/path/mappings.yaml" {
+			t.Errorf("MappingsFile = %q, want %q", cfg.MappingsFile, "/custom/path/mappings.yaml")
+		}
+	})
+
+	t.Run("shared dir preferred when file exists", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("STEVEDORE_SHARED", sharedDir)
+		os.Setenv("DYNDNS_DATA", dataDir)
+
+		// Create shared mappings file
+		sharedMappings := filepath.Join(sharedDir, "dyndns-mappings.yaml")
+		os.WriteFile(sharedMappings, []byte("mappings: []"), 0644)
+		defer os.Remove(sharedMappings)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() unexpected error: %v", err)
+		}
+
+		if cfg.MappingsFile != sharedMappings {
+			t.Errorf("MappingsFile = %q, want %q", cfg.MappingsFile, sharedMappings)
+		}
+	})
+
+	t.Run("data dir fallback when shared file does not exist", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("STEVEDORE_SHARED", sharedDir)
+		os.Setenv("DYNDNS_DATA", dataDir)
+
+		// Create data mappings file but not shared
+		dataMappings := filepath.Join(dataDir, "mappings.yaml")
+		os.WriteFile(dataMappings, []byte("mappings: []"), 0644)
+		defer os.Remove(dataMappings)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() unexpected error: %v", err)
+		}
+
+		if cfg.MappingsFile != dataMappings {
+			t.Errorf("MappingsFile = %q, want %q", cfg.MappingsFile, dataMappings)
+		}
+	})
+
+	t.Run("defaults to shared location when neither file exists", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("STEVEDORE_SHARED", sharedDir)
+		os.Setenv("DYNDNS_DATA", dataDir)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() unexpected error: %v", err)
+		}
+
+		expected := filepath.Join(sharedDir, "dyndns-mappings.yaml")
+		if cfg.MappingsFile != expected {
+			t.Errorf("MappingsFile = %q, want %q", cfg.MappingsFile, expected)
+		}
+	})
+}
+
+func TestFileExists(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "test.txt")
+
+	// File doesn't exist
+	if fileExists(tmpFile) {
+		t.Error("fileExists() = true for non-existent file")
+	}
+
+	// Create file
+	os.WriteFile(tmpFile, []byte("test"), 0644)
+
+	if !fileExists(tmpFile) {
+		t.Error("fileExists() = false for existing file")
+	}
+}
+
 // Helper functions
 
 func clearEnv() {
@@ -270,6 +401,8 @@ func clearEnv() {
 		"LOG_LEVEL",
 		"DYNDNS_DATA",
 		"DYNDNS_LOGS",
+		"STEVEDORE_SHARED",
+		"MAPPINGS_FILE",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)

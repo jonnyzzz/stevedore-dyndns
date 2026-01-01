@@ -126,24 +126,55 @@ stevedore-dyndns/
 │   ├── ipdetect/          # IP detection (TR-064, UPnP, fallbacks)
 │   ├── mapping/           # Mapping table management
 │   └── caddy/             # Caddyfile generation
+├── scripts/
+│   ├── stevedore-setup.sh # Automated stevedore setup script
+│   └── register-service.sh # Service registration helper
+├── .github/
+│   └── workflows/
+│       └── ci.yaml        # GitHub Actions CI/CD pipeline
 └── data/                  # Runtime data (gitignored)
     └── mappings.yaml      # Service mappings (example in repo)
 ```
 
 ## Stevedore Integration
 
-This project is designed to run as a Stevedore deployment:
+This project is designed to run as a Stevedore deployment, providing ingress routing for all other Stevedore-managed services.
+
+### Key Features
 
 1. **Environment Variables**: Use `stevedore param set` for secrets
 2. **Persistent Storage**: Uses `${STEVEDORE_DATA}` for certificates and state
-3. **Health Check**: Exposes `/health` endpoint for Stevedore monitoring
-4. **Logging**: Writes to `${STEVEDORE_LOGS}` directory
+3. **Shared Configuration**: Uses `${STEVEDORE_SHARED}` for cross-deployment mappings
+4. **Health Check**: Exposes `/health` endpoint for Stevedore monitoring
+5. **Logging**: Writes to `${STEVEDORE_LOGS}` directory
+6. **Host Network**: Uses `network_mode: host` for direct Fritzbox access and simplified routing
 
-### Deployment
+### Quick Setup (Automated)
+
+Use the provided setup script for a guided installation:
+
+```bash
+# Clone and run setup
+git clone git@github.com:jonnyzzz/stevedore-dyndns.git
+cd stevedore-dyndns
+./scripts/stevedore-setup.sh
+```
+
+The script will:
+1. Check Stevedore installation
+2. Add the repository and configure deploy key
+3. Prompt for Cloudflare credentials
+4. Create the shared mappings file
+5. Deploy the service
+
+### Manual Deployment
 
 ```bash
 # Add to Stevedore
 stevedore repo add dyndns git@github.com:jonnyzzz/stevedore-dyndns.git
+
+# Add deploy key to GitHub (shown by repo add command)
+stevedore repo key dyndns
 
 # Set required parameters
 stevedore param set dyndns CLOUDFLARE_API_TOKEN "your-token"
@@ -151,10 +182,73 @@ stevedore param set dyndns CLOUDFLARE_ZONE_ID "your-zone-id"
 stevedore param set dyndns DOMAIN "example.com"
 stevedore param set dyndns ACME_EMAIL "[email protected]"
 
+# Optional: Configure Fritzbox (default: 192.168.178.1)
+stevedore param set dyndns FRITZBOX_HOST "192.168.178.1"
+
 # Deploy
 stevedore deploy sync dyndns
 stevedore deploy up dyndns
 ```
+
+### Cross-Deployment Service Registration
+
+Other Stevedore deployments can register their services with dyndns using the shared mappings file.
+
+#### Method 1: Registration Script
+
+Use the provided helper script from any deployment:
+
+```bash
+# Register a service
+/opt/stevedore/deployments/dyndns/scripts/register-service.sh myapp localhost:3000
+
+# With WebSocket support
+./scripts/register-service.sh chat localhost:8080 --websocket
+
+# With custom health path
+./scripts/register-service.sh api localhost:9000 --health-path /api/health
+
+# List registered services
+./scripts/register-service.sh --list
+
+# Unregister
+./scripts/register-service.sh myapp --remove
+```
+
+#### Method 2: Direct YAML Editing
+
+Edit `/opt/stevedore/shared/dyndns-mappings.yaml`:
+
+```yaml
+mappings:
+  - subdomain: myapp
+    target: "localhost:3000"
+  - subdomain: api
+    target: "localhost:8080"
+    options:
+      websocket: true
+      health_path: /healthz
+```
+
+Changes are automatically detected and applied (Caddy reloads within seconds).
+
+### Stevedore Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `STEVEDORE_DEPLOYMENT` | Deployment name (auto-set by Stevedore) |
+| `STEVEDORE_DATA` | Persistent data directory (certificates, state) |
+| `STEVEDORE_LOGS` | Log files directory |
+| `STEVEDORE_SHARED` | Shared storage for cross-deployment communication |
+
+### Mappings File Location
+
+The service checks for mappings in this order:
+1. `MAPPINGS_FILE` environment variable (if set)
+2. `${STEVEDORE_SHARED}/dyndns-mappings.yaml` (if exists)
+3. `${STEVEDORE_DATA}/mappings.yaml` (fallback)
+
+New installations default to the shared location for easier cross-deployment integration.
 
 ## Development
 
