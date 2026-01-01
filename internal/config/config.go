@@ -37,6 +37,10 @@ type Config struct {
 	SharedDir    string
 	MappingsFile string
 	CaddyFile    string
+
+	// Stevedore discovery settings
+	StevedoreSocket string
+	StevedoreToken  string
 }
 
 // Load reads configuration from environment variables
@@ -55,6 +59,8 @@ func Load() (*Config, error) {
 		DataDir:            getEnvDefault("DYNDNS_DATA", "/data"),
 		LogsDir:            getEnvDefault("DYNDNS_LOGS", "/var/log/dyndns"),
 		SharedDir:          getEnvDefault("STEVEDORE_SHARED", "/shared"),
+		StevedoreSocket:    getEnvDefault("STEVEDORE_SOCKET", "/var/run/stevedore/query.sock"),
+		StevedoreToken:     os.Getenv("STEVEDORE_TOKEN"),
 	}
 
 	// Parse IP check interval
@@ -112,6 +118,11 @@ func (c *Config) Validate() error {
 // UseManualIP returns true if manual IP configuration is set
 func (c *Config) UseManualIP() bool {
 	return c.ManualIPv4 != "" || c.ManualIPv6 != ""
+}
+
+// UseDiscovery returns true if stevedore discovery is configured
+func (c *Config) UseDiscovery() bool {
+	return c.StevedoreToken != ""
 }
 
 func getEnvDefault(key, defaultValue string) string {

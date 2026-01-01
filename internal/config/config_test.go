@@ -190,6 +190,66 @@ func TestConfig_UseManualIP(t *testing.T) {
 	}
 }
 
+func TestConfig_UseDiscovery(t *testing.T) {
+	tests := []struct {
+		name  string
+		token string
+		want  bool
+	}{
+		{"no token", "", false},
+		{"with token", "test-token", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				StevedoreToken: tt.token,
+			}
+			if got := cfg.UseDiscovery(); got != tt.want {
+				t.Errorf("UseDiscovery() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoad_DiscoverySettings(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+
+	// Check default socket path
+	if cfg.StevedoreSocket != "/var/run/stevedore/query.sock" {
+		t.Errorf("StevedoreSocket = %q, want %q", cfg.StevedoreSocket, "/var/run/stevedore/query.sock")
+	}
+
+	// No token by default
+	if cfg.StevedoreToken != "" {
+		t.Errorf("StevedoreToken = %q, want empty", cfg.StevedoreToken)
+	}
+
+	// Custom settings
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("STEVEDORE_SOCKET", "/custom/socket.sock")
+	os.Setenv("STEVEDORE_TOKEN", "my-token")
+
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+
+	if cfg.StevedoreSocket != "/custom/socket.sock" {
+		t.Errorf("StevedoreSocket = %q, want %q", cfg.StevedoreSocket, "/custom/socket.sock")
+	}
+	if cfg.StevedoreToken != "my-token" {
+		t.Errorf("StevedoreToken = %q, want %q", cfg.StevedoreToken, "my-token")
+	}
+}
+
 func TestConfig_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -403,6 +463,8 @@ func clearEnv() {
 		"DYNDNS_LOGS",
 		"STEVEDORE_SHARED",
 		"MAPPINGS_FILE",
+		"STEVEDORE_SOCKET",
+		"STEVEDORE_TOKEN",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)

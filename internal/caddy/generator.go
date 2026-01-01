@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"text/template"
 
 	"github.com/jonnyzzz/stevedore-dyndns/internal/config"
+	"github.com/jonnyzzz/stevedore-dyndns/internal/discovery"
 	"github.com/jonnyzzz/stevedore-dyndns/internal/mapping"
 )
 
@@ -16,6 +18,10 @@ type Generator struct {
 	cfg        *config.Config
 	mappingMgr *mapping.Manager
 	tmpl       *template.Template
+
+	// Discovery services (from stevedore socket API)
+	discoveredServices []discovery.Service
+	mu                 sync.RWMutex
 }
 
 // TemplateData contains data passed to the Caddyfile template
@@ -41,7 +47,14 @@ func New(cfg *config.Config, mappingMgr *mapping.Manager) *Generator {
 	}
 }
 
-// Generate creates the Caddyfile from template and current mappings
+// UpdateDiscoveredServices updates the list of services from stevedore discovery
+func (g *Generator) UpdateDiscoveredServices(services []discovery.Service) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.discoveredServices = services
+}
+
+// Generate creates the Caddyfile from template and current mappings/services
 func (g *Generator) Generate() error {
 	// Load template
 	tmplPath := "/etc/caddy/Caddyfile.template"
@@ -64,16 +77,8 @@ func (g *Generator) Generate() error {
 		return fmt.Errorf("failed to parse template: %w", err)
 	}
 
-	// Prepare template data
-	mappings := g.mappingMgr.Get()
-	mappingData := make([]MappingData, 0, len(mappings))
-	for _, m := range mappings {
-		mappingData = append(mappingData, MappingData{
-			Subdomain: m.Subdomain,
-			Target:    m.GetTarget(),
-			Options:   m.Options,
-		})
-	}
+	// Prepare template data - combine mappings and discovered services
+	mappingData := g.collectMappings()
 
 	data := TemplateData{
 		Domain:    g.cfg.Domain,
@@ -93,7 +98,7 @@ func (g *Generator) Generate() error {
 		return fmt.Errorf("failed to write Caddyfile: %w", err)
 	}
 
-	slog.Info("Generated Caddyfile", "path", g.cfg.CaddyFile, "mappings", len(mappings))
+	slog.Info("Generated Caddyfile", "path", g.cfg.CaddyFile, "mappings", len(mappingData))
 
 	// Reload Caddy (if running)
 	if err := g.reloadCaddy(); err != nil {
@@ -101,6 +106,49 @@ func (g *Generator) Generate() error {
 	}
 
 	return nil
+}
+
+// collectMappings gathers all mappings from both YAML files and discovery
+func (g *Generator) collectMappings() []MappingData {
+	seen := make(map[string]bool)
+	var result []MappingData
+
+	// First, add discovered services (higher priority)
+	g.mu.RLock()
+	for _, svc := range g.discoveredServices {
+		if seen[svc.Subdomain] {
+			slog.Warn("Duplicate subdomain in discovered services", "subdomain", svc.Subdomain)
+			continue
+		}
+		seen[svc.Subdomain] = true
+		result = append(result, MappingData{
+			Subdomain: svc.Subdomain,
+			Target:    svc.GetTarget(),
+			Options: mapping.MappingOptions{
+				Websocket:  svc.Websocket,
+				HealthPath: svc.GetHealthPath(),
+			},
+		})
+	}
+	g.mu.RUnlock()
+
+	// Then, add YAML mappings (only if subdomain not already used)
+	if g.mappingMgr != nil {
+		for _, m := range g.mappingMgr.Get() {
+			if seen[m.Subdomain] {
+				slog.Debug("Skipping YAML mapping, subdomain used by discovered service", "subdomain", m.Subdomain)
+				continue
+			}
+			seen[m.Subdomain] = true
+			result = append(result, MappingData{
+				Subdomain: m.Subdomain,
+				Target:    m.GetTarget(),
+				Options:   m.Options,
+			})
+		}
+	}
+
+	return result
 }
 
 func (g *Generator) reloadCaddy() error {

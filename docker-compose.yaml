@@ -35,6 +35,10 @@ services:
       - DOMAIN
       - ACME_EMAIL
 
+      # Discovery mode - token from: stevedore token get dyndns
+      - STEVEDORE_TOKEN
+      - STEVEDORE_SOCKET=/var/run/stevedore/query.sock
+
       # Optional - Fritzbox configuration (works without auth on most routers)
       - FRITZBOX_HOST=${FRITZBOX_HOST:-192.168.178.1}
       - FRITZBOX_USER=${FRITZBOX_USER:-}
@@ -65,6 +69,9 @@ services:
       # Other deployments can register themselves here
       # Stevedore provides: /opt/stevedore/shared
       - ${STEVEDORE_SHARED:-./shared}:/shared
+
+      # Stevedore query socket for service discovery
+      - /var/run/stevedore:/var/run/stevedore:ro
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

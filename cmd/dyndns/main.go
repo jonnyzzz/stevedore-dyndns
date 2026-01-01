@@ -13,6 +13,7 @@ import (
 	"github.com/jonnyzzz/stevedore-dyndns/internal/caddy"
 	"github.com/jonnyzzz/stevedore-dyndns/internal/cloudflare"
 	"github.com/jonnyzzz/stevedore-dyndns/internal/config"
+	"github.com/jonnyzzz/stevedore-dyndns/internal/discovery"
 	"github.com/jonnyzzz/stevedore-dyndns/internal/ipdetect"
 	"github.com/jonnyzzz/stevedore-dyndns/internal/mapping"
 )
@@ -51,6 +52,7 @@ func main() {
 		"domain", cfg.Domain,
 		"fritzbox_host", cfg.FritzboxHost,
 		"ip_check_interval", cfg.IPCheckInterval,
+		"use_discovery", cfg.UseDiscovery(),
 	)
 
 	// Initialize components
@@ -67,14 +69,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Mapping manager
-	mappingMgr := mapping.New(cfg.MappingsFile)
+	// Mapping manager (for backwards compatibility with YAML files)
+	var mappingMgr *mapping.Manager
+	if !cfg.UseDiscovery() {
+		mappingMgr = mapping.New(cfg.MappingsFile)
+	}
 
 	// Caddy config generator
 	caddyGen := caddy.New(cfg, mappingMgr)
 
+	// Discovery client (if configured)
+	var discoveryClient *discovery.Client
+	if cfg.UseDiscovery() {
+		discoveryClient = discovery.New(discovery.Config{
+			SocketPath: cfg.StevedoreSocket,
+			Token:      cfg.StevedoreToken,
+		})
+		slog.Info("Discovery mode enabled", "socket", cfg.StevedoreSocket)
+	}
+
 	// Start the main control loop
-	go runControlLoop(ctx, cfg, detector, cfClient, caddyGen, mappingMgr)
+	go runControlLoop(ctx, cfg, detector, cfClient, caddyGen, mappingMgr, discoveryClient)
 
 	// Start HTTP status server
 	go runStatusServer(ctx, cfg, detector, cfClient)
@@ -97,27 +112,44 @@ func runControlLoop(
 	cfClient *cloudflare.Client,
 	caddyGen *caddy.Generator,
 	mappingMgr *mapping.Manager,
+	discoveryClient *discovery.Client,
 ) {
 	// Initial IP detection and DNS update
 	updateIPAndDNS(ctx, cfg, detector, cfClient)
 
-	// Load mappings BEFORE generating initial Caddy config
-	if err := mappingMgr.Load(); err != nil {
-		slog.Error("Failed to load initial mappings", "error", err)
+	// Load initial services/mappings
+	if discoveryClient != nil {
+		// Discovery mode: fetch services from stevedore socket
+		services, err := discoveryClient.GetIngressServices(ctx)
+		if err != nil {
+			slog.Error("Failed to fetch initial services from discovery", "error", err)
+		} else {
+			slog.Info("Loaded services from discovery", "count", len(services))
+			caddyGen.UpdateDiscoveredServices(services)
+		}
+	} else if mappingMgr != nil {
+		// Legacy mode: load mappings from YAML file
+		if err := mappingMgr.Load(); err != nil {
+			slog.Error("Failed to load initial mappings", "error", err)
+		}
 	}
 
-	// Generate initial Caddy config (now with mappings loaded)
+	// Generate initial Caddy config
 	if err := caddyGen.Generate(); err != nil {
 		slog.Error("Failed to generate Caddy config", "error", err)
 	}
 
-	// Watch for mapping changes (will reload mappings on file changes)
-	go mappingMgr.Watch(ctx, func() {
-		slog.Info("Mappings changed, regenerating Caddy config")
-		if err := caddyGen.Generate(); err != nil {
-			slog.Error("Failed to regenerate Caddy config", "error", err)
-		}
-	})
+	// Start service discovery polling or file watching
+	if discoveryClient != nil {
+		go runDiscoveryLoop(ctx, discoveryClient, caddyGen)
+	} else if mappingMgr != nil {
+		go mappingMgr.Watch(ctx, func() {
+			slog.Info("Mappings changed, regenerating Caddy config")
+			if err := caddyGen.Generate(); err != nil {
+				slog.Error("Failed to regenerate Caddy config", "error", err)
+			}
+		})
+	}
 
 	// Periodic IP check
 	ticker := time.NewTicker(cfg.IPCheckInterval)
@@ -129,6 +161,42 @@ func runControlLoop(
 			return
 		case <-ticker.C:
 			updateIPAndDNS(ctx, cfg, detector, cfClient)
+		}
+	}
+}
+
+// runDiscoveryLoop polls the stevedore socket for service changes
+func runDiscoveryLoop(ctx context.Context, client *discovery.Client, caddyGen *caddy.Generator) {
+	var since time.Time
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		services, newSince, err := client.Poll(ctx, since)
+		if err != nil {
+			slog.Error("Discovery poll failed", "error", err)
+			// Wait before retrying on error
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+				continue
+			}
+		}
+
+		since = newSince
+
+		// If services changed (not nil), update and regenerate
+		if services != nil {
+			slog.Info("Services changed via discovery", "count", len(services))
+			caddyGen.UpdateDiscoveredServices(services)
+			if err := caddyGen.Generate(); err != nil {
+				slog.Error("Failed to regenerate Caddy config", "error", err)
+			}
 		}
 	}
 }
