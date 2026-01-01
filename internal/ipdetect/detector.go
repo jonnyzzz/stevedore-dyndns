@@ -49,11 +49,23 @@ func (d *Detector) Detect(ctx context.Context) (ipv4, ipv6 string, err error) {
 	}
 
 	// Try Fritzbox TR-064 first
-	ipv4, ipv6, err = d.detectFromFritzbox(ctx)
-	if err == nil && (ipv4 != "" || ipv6 != "") {
-		slog.Debug("Got IP from Fritzbox", "ipv4", ipv4, "ipv6", ipv6)
-		d.updateLast(ipv4, ipv6)
-		return ipv4, ipv6, nil
+	fritzIPv4, fritzIPv6, err := d.detectFromFritzbox(ctx)
+	if err == nil && (fritzIPv4 != "" || fritzIPv6 != "") {
+		slog.Debug("Got IP from Fritzbox", "ipv4", fritzIPv4, "ipv6", fritzIPv6)
+
+		// Validate Fritzbox IPs against external services
+		validatedIPv4, validatedIPv6 := d.validateWithExternalServices(ctx, fritzIPv4, fritzIPv6)
+
+		if validatedIPv4 != "" || validatedIPv6 != "" {
+			d.updateLast(validatedIPv4, validatedIPv6)
+			return validatedIPv4, validatedIPv6, nil
+		}
+
+		// If validation failed but Fritzbox returned IPs, use them with a warning
+		slog.Warn("Could not validate Fritzbox IPs with external services, using Fritzbox values",
+			"ipv4", fritzIPv4, "ipv6", fritzIPv6)
+		d.updateLast(fritzIPv4, fritzIPv6)
+		return fritzIPv4, fritzIPv6, nil
 	}
 	if err != nil {
 		slog.Warn("Fritzbox detection failed", "error", err)
@@ -189,13 +201,58 @@ func (d *Detector) parseSOAPIPResponse(body string, isIPv6 bool) string {
 	return response.ExternalIPAddress
 }
 
+// validateWithExternalServices validates Fritzbox IPs against external services
+func (d *Detector) validateWithExternalServices(ctx context.Context, fritzIPv4, fritzIPv6 string) (ipv4, ipv6 string) {
+	// Use showmyip and other services to validate Fritzbox-reported IPs
+	validationServices := []string{
+		"https://api.showmyip.com/",       // Returns just the IP
+		"https://api.ipify.org",
+		"https://checkip.amazonaws.com",
+	}
+
+	if fritzIPv4 != "" {
+		for _, svc := range validationServices {
+			externalIP, err := d.fetchIPFromService(ctx, svc)
+			if err != nil {
+				slog.Debug("Validation service failed", "service", svc, "error", err)
+				continue
+			}
+			if isValidIPv4(externalIP) {
+				if externalIP == fritzIPv4 {
+					slog.Info("Fritzbox IPv4 validated by external service",
+						"ip", fritzIPv4, "service", svc)
+					ipv4 = fritzIPv4
+					break
+				} else {
+					slog.Warn("Fritzbox IPv4 mismatch with external service",
+						"fritzbox", fritzIPv4, "external", externalIP, "service", svc)
+					// Use the external service IP as it's more reliable
+					ipv4 = externalIP
+					break
+				}
+			}
+		}
+	}
+
+	// For IPv6, validation is trickier as many services don't support it
+	// Trust Fritzbox for IPv6 if it looks valid
+	if fritzIPv6 != "" && isValidIPv6(fritzIPv6) {
+		ipv6 = fritzIPv6
+		slog.Debug("Using Fritzbox IPv6 (trusted)", "ipv6", ipv6)
+	}
+
+	return ipv4, ipv6
+}
+
 // detectFromExternalServices uses public IP detection services as fallback
 func (d *Detector) detectFromExternalServices(ctx context.Context) (ipv4, ipv6 string, err error) {
 	slog.Info("Falling back to external IP detection services")
 
-	// IPv4 detection services
+	// IPv4 detection services (including showmyip)
 	ipv4Services := []string{
+		"https://api.showmyip.com/",
 		"https://api.ipify.org",
+		"https://checkip.amazonaws.com",
 		"https://ipv4.icanhazip.com",
 		"https://v4.ident.me",
 	}
@@ -211,6 +268,7 @@ func (d *Detector) detectFromExternalServices(ctx context.Context) (ipv4, ipv6 s
 	for _, svc := range ipv4Services {
 		ip, err := d.fetchIPFromService(ctx, svc)
 		if err == nil && isValidIPv4(ip) {
+			slog.Debug("Got IPv4 from external service", "ip", ip, "service", svc)
 			ipv4 = ip
 			break
 		}
@@ -220,6 +278,7 @@ func (d *Detector) detectFromExternalServices(ctx context.Context) (ipv4, ipv6 s
 	for _, svc := range ipv6Services {
 		ip, err := d.fetchIPFromService(ctx, svc)
 		if err == nil && isValidIPv6(ip) {
+			slog.Debug("Got IPv6 from external service", "ip", ip, "service", svc)
 			ipv6 = ip
 			break
 		}

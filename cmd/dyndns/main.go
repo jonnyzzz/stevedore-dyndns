@@ -101,12 +101,17 @@ func runControlLoop(
 	// Initial IP detection and DNS update
 	updateIPAndDNS(ctx, cfg, detector, cfClient)
 
-	// Generate initial Caddy config
+	// Load mappings BEFORE generating initial Caddy config
+	if err := mappingMgr.Load(); err != nil {
+		slog.Error("Failed to load initial mappings", "error", err)
+	}
+
+	// Generate initial Caddy config (now with mappings loaded)
 	if err := caddyGen.Generate(); err != nil {
 		slog.Error("Failed to generate Caddy config", "error", err)
 	}
 
-	// Watch for mapping changes
+	// Watch for mapping changes (will reload mappings on file changes)
 	go mappingMgr.Watch(ctx, func() {
 		slog.Info("Mappings changed, regenerating Caddy config")
 		if err := caddyGen.Generate(); err != nil {

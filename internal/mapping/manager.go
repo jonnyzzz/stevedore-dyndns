@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sync"
 
@@ -74,19 +75,22 @@ func (m *Manager) Load() error {
 		return fmt.Errorf("failed to parse mappings file: %w", err)
 	}
 
-	// Validate and resolve mappings
+	// Validate and resolve mappings, only keeping valid ones
+	validMappings := make([]Mapping, 0, len(file.Mappings))
 	for i := range file.Mappings {
 		if err := m.validateMapping(&file.Mappings[i]); err != nil {
-			slog.Warn("Invalid mapping", "subdomain", file.Mappings[i].Subdomain, "error", err)
+			slog.Warn("Skipping invalid mapping", "subdomain", file.Mappings[i].Subdomain, "error", err)
 			continue
 		}
 		if err := m.resolveMapping(&file.Mappings[i]); err != nil {
-			slog.Warn("Failed to resolve mapping", "subdomain", file.Mappings[i].Subdomain, "error", err)
+			slog.Warn("Skipping unresolved mapping", "subdomain", file.Mappings[i].Subdomain, "error", err)
+			continue
 		}
+		validMappings = append(validMappings, file.Mappings[i])
 	}
 
-	m.mappings = file.Mappings
-	slog.Info("Loaded mappings", "count", len(m.mappings))
+	m.mappings = validMappings
+	slog.Info("Loaded mappings", "valid", len(validMappings), "total", len(file.Mappings))
 	return nil
 }
 
@@ -101,10 +105,8 @@ func (m *Manager) Get() []Mapping {
 
 // Watch monitors the mappings file for changes
 func (m *Manager) Watch(ctx context.Context, onChange func()) {
-	// Initial load
-	if err := m.Load(); err != nil {
-		slog.Error("Failed to load initial mappings", "error", err)
-	}
+	// Note: Initial load is now done by caller before Watch() is called
+	// This prevents race conditions between loading and watching
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -113,10 +115,16 @@ func (m *Manager) Watch(ctx context.Context, onChange func()) {
 	}
 	defer watcher.Close()
 
-	if err := watcher.Add(m.filePath); err != nil {
-		slog.Warn("Failed to watch mappings file", "path", m.filePath, "error", err)
-		// Continue without watching - file might not exist yet
+	// Watch the directory containing the mappings file, not the file itself
+	// This allows us to detect when the file is created if it doesn't exist yet
+	dir := filepath.Dir(m.filePath)
+	filename := filepath.Base(m.filePath)
+
+	if err := watcher.Add(dir); err != nil {
+		slog.Error("Failed to watch mappings directory", "path", dir, "error", err)
+		return
 	}
+	slog.Info("Watching for mappings file changes", "directory", dir, "filename", filename)
 
 	for {
 		select {
@@ -126,8 +134,12 @@ func (m *Manager) Watch(ctx context.Context, onChange func()) {
 			if !ok {
 				return
 			}
+			// Only react to events for our specific file
+			if filepath.Base(event.Name) != filename {
+				continue
+			}
 			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-				slog.Info("Mappings file changed", "event", event.Op)
+				slog.Info("Mappings file changed", "event", event.Op, "file", event.Name)
 				if err := m.Load(); err != nil {
 					slog.Error("Failed to reload mappings", "error", err)
 				} else if onChange != nil {
