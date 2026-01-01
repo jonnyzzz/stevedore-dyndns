@@ -1,0 +1,51 @@
+# Data directory (contains certificates, state, and mappings)
+/data/
+!/data/mappings.example.yaml
+
+# Logs
+/logs/
+*.log
+
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+
+# Go build artifacts
+/dyndns
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of coverage
+*.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yaml
+docker-compose.override.yml
+
+# Temporary files
+tmp/
+temp/
+*.tmp

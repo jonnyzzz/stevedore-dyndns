@@ -1,0 +1,147 @@
+package cloudflare
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"sync"
+
+	"github.com/cloudflare/cloudflare-go"
+	"github.com/jonnyzzz/stevedore-dyndns/internal/config"
+)
+
+// Client wraps the Cloudflare API client
+type Client struct {
+	api    *cloudflare.API
+	zoneID string
+	domain string
+
+	// Cache of record IDs to avoid lookups
+	recordCache map[string]string
+	cacheMu     sync.RWMutex
+}
+
+// New creates a new Cloudflare client
+func New(cfg *config.Config) (*Client, error) {
+	api, err := cloudflare.NewWithAPIToken(cfg.CloudflareAPIToken)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Cloudflare client: %w", err)
+	}
+
+	return &Client{
+		api:         api,
+		zoneID:      cfg.CloudflareZoneID,
+		domain:      cfg.Domain,
+		recordCache: make(map[string]string),
+	}, nil
+}
+
+// UpdateRecord creates or updates a DNS record
+func (c *Client) UpdateRecord(ctx context.Context, name string, recordType string, content string) error {
+	cacheKey := fmt.Sprintf("%s:%s", name, recordType)
+
+	// Check cache for existing record ID
+	c.cacheMu.RLock()
+	recordID, cached := c.recordCache[cacheKey]
+	c.cacheMu.RUnlock()
+
+	rc := cloudflare.ZoneIdentifier(c.zoneID)
+
+	if !cached {
+		// Look up existing record
+		records, _, err := c.api.ListDNSRecords(ctx, rc, cloudflare.ListDNSRecordsParams{
+			Name: name,
+			Type: recordType,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to list DNS records: %w", err)
+		}
+
+		if len(records) > 0 {
+			recordID = records[0].ID
+			c.cacheMu.Lock()
+			c.recordCache[cacheKey] = recordID
+			c.cacheMu.Unlock()
+		}
+	}
+
+	if recordID != "" {
+		// Update existing record
+		_, err := c.api.UpdateDNSRecord(ctx, rc, cloudflare.UpdateDNSRecordParams{
+			ID:      recordID,
+			Type:    recordType,
+			Name:    name,
+			Content: content,
+			TTL:     300, // 5 minutes
+			Proxied: cloudflare.BoolPtr(false),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update DNS record: %w", err)
+		}
+		slog.Debug("Updated DNS record", "name", name, "type", recordType, "content", content)
+	} else {
+		// Create new record
+		record, err := c.api.CreateDNSRecord(ctx, rc, cloudflare.CreateDNSRecordParams{
+			Type:    recordType,
+			Name:    name,
+			Content: content,
+			TTL:     300,
+			Proxied: cloudflare.BoolPtr(false),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create DNS record: %w", err)
+		}
+		c.cacheMu.Lock()
+		c.recordCache[cacheKey] = record.ID
+		c.cacheMu.Unlock()
+		slog.Debug("Created DNS record", "name", name, "type", recordType, "content", content, "id", record.ID)
+	}
+
+	return nil
+}
+
+// DeleteRecord removes a DNS record
+func (c *Client) DeleteRecord(ctx context.Context, name string, recordType string) error {
+	cacheKey := fmt.Sprintf("%s:%s", name, recordType)
+
+	c.cacheMu.RLock()
+	recordID, cached := c.recordCache[cacheKey]
+	c.cacheMu.RUnlock()
+
+	rc := cloudflare.ZoneIdentifier(c.zoneID)
+
+	if !cached {
+		// Look up existing record
+		records, _, err := c.api.ListDNSRecords(ctx, rc, cloudflare.ListDNSRecordsParams{
+			Name: name,
+			Type: recordType,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to list DNS records: %w", err)
+		}
+		if len(records) == 0 {
+			return nil // Record doesn't exist
+		}
+		recordID = records[0].ID
+	}
+
+	if err := c.api.DeleteDNSRecord(ctx, rc, recordID); err != nil {
+		return fmt.Errorf("failed to delete DNS record: %w", err)
+	}
+
+	c.cacheMu.Lock()
+	delete(c.recordCache, cacheKey)
+	c.cacheMu.Unlock()
+
+	slog.Debug("Deleted DNS record", "name", name, "type", recordType)
+	return nil
+}
+
+// GetZoneInfo returns information about the configured zone
+func (c *Client) GetZoneInfo(ctx context.Context) (*cloudflare.Zone, error) {
+	zone, err := c.api.ZoneDetails(ctx, c.zoneID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get zone details: %w", err)
+	}
+	return &zone, nil
+}

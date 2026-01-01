@@ -1,0 +1,82 @@
+# Stevedore DynDNS - Caddy Configuration Template
+# This file is processed by the dyndns service to generate the final Caddyfile
+
+{
+    # Global options
+    email {{.AcmeEmail}}
+
+    # Use Let's Encrypt production (change to staging for testing)
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+
+    # Enable HTTP/3
+    servers {
+        protocol {
+            experimental_http3
+        }
+    }
+
+    # Logging
+    log {
+        level {{.LogLevel}}
+        output file /var/log/dyndns/caddy.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}
+
+# Wildcard certificate for the domain
+*.{{.Domain}}, {{.Domain}} {
+    # TLS with Cloudflare DNS challenge for wildcard cert
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+
+    # Dynamic routing based on subdomain
+    {{range .Mappings}}
+    @{{.Subdomain}} host {{.Subdomain}}.{{$.Domain}}
+    handle @{{.Subdomain}} {
+        reverse_proxy {{.Target}} {
+            {{if .Options.Websocket}}
+            # WebSocket support
+            header_up Connection {>Connection}
+            header_up Upgrade {>Upgrade}
+            {{end}}
+            {{if not .Options.BufferRequests}}
+            flush_interval -1
+            {{end}}
+            # Health checks
+            health_uri {{.Options.HealthPath | default "/health"}}
+            health_interval 30s
+            health_timeout 5s
+
+            # Headers
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-Host {host}
+        }
+    }
+    {{end}}
+
+    # Default handler for unmatched subdomains
+    handle {
+        respond "Not Found" 404
+    }
+}
+
+# Health check endpoint (internal only)
+:8080 {
+    handle /health {
+        respond "OK" 200
+    }
+
+    handle /status {
+        # Returns JSON status (handled by Go service)
+        reverse_proxy localhost:8081
+    }
+
+    handle {
+        respond "Not Found" 404
+    }
+}
