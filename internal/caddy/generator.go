@@ -108,6 +108,35 @@ func (g *Generator) Generate() error {
 	return nil
 }
 
+// GetActiveSubdomains returns a list of all currently active subdomains
+func (g *Generator) GetActiveSubdomains() []string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	seen := make(map[string]bool)
+	var result []string
+
+	// From discovered services
+	for _, svc := range g.discoveredServices {
+		if !seen[svc.Subdomain] {
+			seen[svc.Subdomain] = true
+			result = append(result, svc.Subdomain)
+		}
+	}
+
+	// From YAML mappings
+	if g.mappingMgr != nil {
+		for _, m := range g.mappingMgr.Get() {
+			if !seen[m.Subdomain] {
+				seen[m.Subdomain] = true
+				result = append(result, m.Subdomain)
+			}
+		}
+	}
+
+	return result
+}
+
 // collectMappings gathers all mappings from both YAML files and discovery
 func (g *Generator) collectMappings() []MappingData {
 	seen := make(map[string]bool)

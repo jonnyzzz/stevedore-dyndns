@@ -115,7 +115,7 @@ func runControlLoop(
 	discoveryClient *discovery.Client,
 ) {
 	// Initial IP detection and DNS update
-	updateIPAndDNS(ctx, cfg, detector, cfClient)
+	updateIPAndDNS(ctx, cfg, detector, cfClient, caddyGen)
 
 	// Load initial services/mappings
 	if discoveryClient != nil {
@@ -160,7 +160,7 @@ func runControlLoop(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			updateIPAndDNS(ctx, cfg, detector, cfClient)
+			updateIPAndDNS(ctx, cfg, detector, cfClient, caddyGen)
 		}
 	}
 }
@@ -206,6 +206,7 @@ func updateIPAndDNS(
 	cfg *config.Config,
 	detector *ipdetect.Detector,
 	cfClient *cloudflare.Client,
+	caddyGen *caddy.Generator,
 ) {
 	// Detect current IPs
 	ipv4, ipv6, err := detector.Detect(ctx)
@@ -219,19 +220,12 @@ func updateIPAndDNS(
 		"ipv6", ipv6,
 	)
 
-	// Update DNS records
+	// Update root domain DNS records
 	if ipv4 != "" {
 		if err := cfClient.UpdateRecord(ctx, cfg.Domain, "A", ipv4); err != nil {
 			slog.Error("Failed to update A record", "error", err)
 		} else {
 			slog.Info("Updated A record", "domain", cfg.Domain, "ip", ipv4)
-		}
-
-		// Update wildcard A record
-		if err := cfClient.UpdateRecord(ctx, "*."+cfg.Domain, "A", ipv4); err != nil {
-			slog.Error("Failed to update wildcard A record", "error", err)
-		} else {
-			slog.Info("Updated wildcard A record", "domain", "*."+cfg.Domain, "ip", ipv4)
 		}
 	}
 
@@ -241,12 +235,94 @@ func updateIPAndDNS(
 		} else {
 			slog.Info("Updated AAAA record", "domain", cfg.Domain, "ip", ipv6)
 		}
+	}
 
-		// Update wildcard AAAA record
-		if err := cfClient.UpdateRecord(ctx, "*."+cfg.Domain, "AAAA", ipv6); err != nil {
-			slog.Error("Failed to update wildcard AAAA record", "error", err)
-		} else {
-			slog.Info("Updated wildcard AAAA record", "domain", "*."+cfg.Domain, "ip", ipv6)
+	// Handle subdomain records based on proxy mode
+	if cfClient.IsProxied() {
+		// Proxy mode: create individual subdomain records (required for Cloudflare Universal SSL)
+		updateSubdomainRecords(ctx, cfg, cfClient, caddyGen, ipv4, ipv6)
+	} else {
+		// Direct mode: use wildcard records
+		if ipv4 != "" {
+			if err := cfClient.UpdateRecord(ctx, "*."+cfg.Domain, "A", ipv4); err != nil {
+				slog.Error("Failed to update wildcard A record", "error", err)
+			} else {
+				slog.Info("Updated wildcard A record", "domain", "*."+cfg.Domain, "ip", ipv4)
+			}
+		}
+		if ipv6 != "" {
+			if err := cfClient.UpdateRecord(ctx, "*."+cfg.Domain, "AAAA", ipv6); err != nil {
+				slog.Error("Failed to update wildcard AAAA record", "error", err)
+			} else {
+				slog.Info("Updated wildcard AAAA record", "domain", "*."+cfg.Domain, "ip", ipv6)
+			}
+		}
+	}
+}
+
+// updateSubdomainRecords creates/updates individual subdomain DNS records
+// This is required when Cloudflare proxy is enabled because Cloudflare Universal SSL
+// doesn't cover wildcard subdomains (*.domain.com)
+func updateSubdomainRecords(
+	ctx context.Context,
+	cfg *config.Config,
+	cfClient *cloudflare.Client,
+	caddyGen *caddy.Generator,
+	ipv4, ipv6 string,
+) {
+	// Get active subdomains from Caddy config
+	activeSubdomains := caddyGen.GetActiveSubdomains()
+
+	// Create a set for quick lookup
+	activeSet := make(map[string]bool)
+	for _, sub := range activeSubdomains {
+		activeSet[sub] = true
+	}
+
+	slog.Info("Updating subdomain DNS records",
+		"proxy_mode", true,
+		"active_subdomains", len(activeSubdomains),
+	)
+
+	// Update records for each active subdomain
+	for _, subdomain := range activeSubdomains {
+		fqdn := subdomain + "." + cfg.Domain
+
+		if ipv4 != "" {
+			if err := cfClient.UpdateRecord(ctx, fqdn, "A", ipv4); err != nil {
+				slog.Error("Failed to update subdomain A record", "subdomain", subdomain, "error", err)
+			} else {
+				slog.Debug("Updated subdomain A record", "subdomain", subdomain, "fqdn", fqdn)
+			}
+		}
+
+		if ipv6 != "" {
+			if err := cfClient.UpdateRecord(ctx, fqdn, "AAAA", ipv6); err != nil {
+				slog.Error("Failed to update subdomain AAAA record", "subdomain", subdomain, "error", err)
+			} else {
+				slog.Debug("Updated subdomain AAAA record", "subdomain", subdomain, "fqdn", fqdn)
+			}
+		}
+	}
+
+	// Clean up old subdomain records that are no longer active
+	existingSubdomains, err := cfClient.GetManagedSubdomainRecords(ctx)
+	if err != nil {
+		slog.Error("Failed to get existing subdomain records", "error", err)
+		return
+	}
+
+	for _, existing := range existingSubdomains {
+		if !activeSet[existing] {
+			fqdn := existing + "." + cfg.Domain
+			slog.Info("Removing stale subdomain DNS record", "subdomain", existing)
+
+			if err := cfClient.DeleteRecord(ctx, fqdn, "A"); err != nil {
+				slog.Error("Failed to delete stale A record", "subdomain", existing, "error", err)
+			}
+			if err := cfClient.DeleteRecord(ctx, fqdn, "AAAA"); err != nil {
+				slog.Error("Failed to delete stale AAAA record", "subdomain", existing, "error", err)
+			}
 		}
 	}
 }

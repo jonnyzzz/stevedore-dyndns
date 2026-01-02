@@ -182,3 +182,68 @@ func (c *Client) GetZoneInfo(ctx context.Context) (*cloudflare.Zone, error) {
 	}
 	return &zone, nil
 }
+
+// IsProxied returns whether Cloudflare proxy mode is enabled
+func (c *Client) IsProxied() bool {
+	return c.proxied
+}
+
+// Domain returns the configured domain
+func (c *Client) Domain() string {
+	return c.domain
+}
+
+// GetManagedSubdomainRecords returns all subdomain DNS records managed by this service.
+// It looks for A and AAAA records that are subdomains of the configured domain.
+func (c *Client) GetManagedSubdomainRecords(ctx context.Context) ([]string, error) {
+	rc := cloudflare.ZoneIdentifier(c.zoneID)
+
+	// Get all A records
+	aRecords, _, err := c.api.ListDNSRecords(ctx, rc, cloudflare.ListDNSRecordsParams{
+		Type: "A",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list A records: %w", err)
+	}
+
+	// Get all AAAA records
+	aaaaRecords, _, err := c.api.ListDNSRecords(ctx, rc, cloudflare.ListDNSRecordsParams{
+		Type: "AAAA",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list AAAA records: %w", err)
+	}
+
+	// Collect subdomain names (not the domain itself, not wildcards)
+	seen := make(map[string]bool)
+	var subdomains []string
+
+	for _, r := range append(aRecords, aaaaRecords...) {
+		name := strings.TrimSuffix(r.Name, ".")
+		domain := strings.TrimSuffix(c.domain, ".")
+
+		// Skip the domain itself
+		if strings.EqualFold(name, domain) {
+			continue
+		}
+
+		// Skip wildcard records
+		if strings.HasPrefix(name, "*.") {
+			continue
+		}
+
+		// Only include subdomains of our domain
+		if !strings.HasSuffix(strings.ToLower(name), "."+strings.ToLower(domain)) {
+			continue
+		}
+
+		// Extract just the subdomain part
+		subdomain := strings.TrimSuffix(strings.ToLower(name), "."+strings.ToLower(domain))
+		if subdomain != "" && !seen[subdomain] {
+			seen[subdomain] = true
+			subdomains = append(subdomains, subdomain)
+		}
+	}
+
+	return subdomains, nil
+}
