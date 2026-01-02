@@ -8,12 +8,7 @@
     # Use Let's Encrypt production (change to staging for testing)
     # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
 
-    # Enable HTTP/3
-    servers {
-        protocol {
-            experimental_http3
-        }
-    }
+    # HTTP/3 is enabled by default in Caddy 2.6+
 
     # Logging
     log {
