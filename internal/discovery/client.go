@@ -60,11 +60,24 @@ func New(cfg Config) *Client {
 	}
 }
 
+// ingressConfig represents the structured ingress configuration from stevedore API.
+type ingressConfig struct {
+	Enabled     bool   `json:"enabled"`
+	Subdomain   string `json:"subdomain"`
+	Port        int    `json:"port"`
+	Websocket   bool   `json:"websocket,omitempty"`
+	Healthcheck string `json:"healthcheck,omitempty"`
+}
+
 // serviceResponse matches the stevedore API response structure.
 type serviceResponse struct {
-	Deployment string            `json:"deployment"`
-	Container  string            `json:"container"`
-	Labels     map[string]string `json:"labels"`
+	Deployment    string            `json:"deployment"`
+	Service       string            `json:"service"`
+	ContainerID   string            `json:"container_id"`
+	ContainerName string            `json:"container_name"`
+	Running       bool              `json:"running"`
+	Ingress       *ingressConfig    `json:"ingress,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"` // Legacy format
 }
 
 // GetIngressServices returns all services with ingress labels.
@@ -147,11 +160,31 @@ func (c *Client) parseServices(responses []serviceResponse) []Service {
 	var services []Service
 
 	for _, r := range responses {
-		svc, err := parseServiceFromLabels(r.Deployment, r.Container, r.Labels)
-		if err != nil {
-			slog.Warn("Failed to parse service labels", "container", r.Container, "error", err)
+		var svc Service
+		var err error
+
+		// Try new structured format first
+		if r.Ingress != nil && r.Ingress.Enabled {
+			svc = Service{
+				Deployment:  r.Deployment,
+				Container:   r.ContainerName,
+				Subdomain:   r.Ingress.Subdomain,
+				Port:        r.Ingress.Port,
+				Websocket:   r.Ingress.Websocket,
+				HealthCheck: r.Ingress.Healthcheck,
+			}
+		} else if r.Labels != nil {
+			// Fall back to legacy labels format
+			svc, err = parseServiceFromLabels(r.Deployment, r.ContainerName, r.Labels)
+			if err != nil {
+				slog.Warn("Failed to parse service labels", "container", r.ContainerName, "error", err)
+				continue
+			}
+		} else {
+			slog.Debug("Skipping service without ingress config", "container", r.ContainerName)
 			continue
 		}
+
 		services = append(services, svc)
 	}
 

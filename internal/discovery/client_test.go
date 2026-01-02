@@ -222,23 +222,29 @@ func TestClient_MockServer(t *testing.T) {
 
 		services := []serviceResponse{
 			{
-				Deployment: "myapp",
-				Container:  "stevedore-myapp-web-1",
-				Labels: map[string]string{
-					"stevedore.ingress.enabled":   "true",
-					"stevedore.ingress.subdomain": "myapp",
-					"stevedore.ingress.port":      "3000",
+				Deployment:    "myapp",
+				Service:       "web",
+				ContainerID:   "abc123",
+				ContainerName: "stevedore-myapp-web-1",
+				Running:       true,
+				Ingress: &ingressConfig{
+					Enabled:   true,
+					Subdomain: "myapp",
+					Port:      3000,
 				},
 			},
 			{
-				Deployment: "api",
-				Container:  "stevedore-api-server-1",
-				Labels: map[string]string{
-					"stevedore.ingress.enabled":     "true",
-					"stevedore.ingress.subdomain":   "api",
-					"stevedore.ingress.port":        "8080",
-					"stevedore.ingress.websocket":   "true",
-					"stevedore.ingress.healthcheck": "/healthz",
+				Deployment:    "api",
+				Service:       "server",
+				ContainerID:   "def456",
+				ContainerName: "stevedore-api-server-1",
+				Running:       true,
+				Ingress: &ingressConfig{
+					Enabled:     true,
+					Subdomain:   "api",
+					Port:        8080,
+					Websocket:   true,
+					Healthcheck: "/healthz",
 				},
 			},
 		}
