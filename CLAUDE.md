@@ -618,6 +618,68 @@ stevedore param set nginx STEVEDORE_INGRESS_NGINX_HEALTHCHECK /
 - [ ] Metrics and monitoring (Prometheus)
 - [ ] Backup/restore for certificates
 
+## Release Workflow
+
+### Version Management
+
+- Version is stored in `VERSION` file (single line, semver format: `MAJOR.MINOR.PATCH`)
+- Increment VERSION when adding new features:
+  - MAJOR: Breaking changes or major new functionality
+  - MINOR: New features, significant improvements
+  - PATCH: Bug fixes, documentation updates
+
+### Changelog
+
+Maintain `CHANGES.md` with release notes:
+- Group changes by release version
+- Use sections: Added, Fixed, Changed, Removed, Documentation
+- Reference resolved issues with `Resolves #N`
+
+### Release Process
+
+1. Increment VERSION file
+2. Update CHANGES.md with new release section
+3. Run `go test ./...` and `go build ./...`
+4. Commit: `git commit -m "release: vX.Y.Z"`
+5. Push and wait for CI to pass
+6. Deploy to production via `stevedore deploy sync dyndns && stevedore deploy up dyndns`
+7. Verify deployment with `stevedore status dyndns`
+
+### Build-time Version Injection
+
+The Dockerfile injects version info via ldflags:
+- `Version` - from VERSION file
+- `GitCommit` - short git commit hash
+- `BuildDate` - UTC build timestamp
+
+Version is logged at startup:
+```json
+{"level":"INFO","msg":"Starting stevedore-dyndns","version":"0.9.0","commit":"abc1234","build_date":"2026-01-02T15:00:00Z"}
+```
+
+## Development Practices
+
+Following stevedore project conventions:
+
+1. **Test-First Approach**: All bugs are fixed by first adding a failing test
+2. **Documentation**: Keep CLAUDE.md and docs consistent with implementation
+3. **Industry Best Practices**: Follow Go and DevOps conventions from Docker, Kubernetes ecosystem
+4. **Integration Tests**: Verify end-to-end functionality
+5. **No Ignored Warnings**: Fix all warnings properly
+
+### Feature Implementation Checklist
+
+- [ ] Read and understand requirements
+- [ ] Write tests for new functionality
+- [ ] Implement the feature
+- [ ] Run `go build ./...` and `go test ./...`
+- [ ] Update CLAUDE.md with feature documentation
+- [ ] Update CHANGES.md with release notes
+- [ ] Increment VERSION file
+- [ ] Commit with descriptive message
+- [ ] Push and verify CI passes
+- [ ] Deploy to production and verify
+
 ## Related Projects
 
 - [Stevedore](https://github.com/jonnyzzz/stevedore) - Container orchestration for this service

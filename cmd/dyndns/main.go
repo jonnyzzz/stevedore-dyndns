@@ -19,6 +19,13 @@ import (
 	"github.com/jonnyzzz/stevedore-dyndns/internal/mapping"
 )
 
+// Build-time variables injected via ldflags
+var (
+	Version   = "dev"
+	GitCommit = "unknown"
+	BuildDate = "unknown"
+)
+
 func main() {
 	// Setup logging
 	logLevel := os.Getenv("LOG_LEVEL")
@@ -38,7 +45,9 @@ func main() {
 	slog.SetDefault(logger)
 
 	slog.Info("Starting stevedore-dyndns",
-		"version", "0.1.0",
+		"version", Version,
+		"commit", GitCommit,
+		"build_date", BuildDate,
 		"log_level", logLevel,
 	)
 

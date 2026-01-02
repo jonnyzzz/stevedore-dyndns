@@ -7,11 +7,26 @@ RUN xcaddy build \
 
 # Stage 2: Build Go service
 FROM golang:1.21-alpine AS go-builder
+
+# Install git for version info
+RUN apk add --no-cache git
+
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /dyndns ./cmd/dyndns
+
+# Build with version info injected via ldflags
+RUN set -e; \
+	VERSION="dev"; \
+	if [ -f VERSION ]; then VERSION="$(tr -d '\r\n' < VERSION)"; fi; \
+	GIT_COMMIT="unknown"; \
+	if git rev-parse --short HEAD >/dev/null 2>&1; then GIT_COMMIT="$(git rev-parse --short HEAD)"; fi; \
+	BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
+	echo "Building version=${VERSION} commit=${GIT_COMMIT} date=${BUILD_DATE}"; \
+	CGO_ENABLED=0 GOOS=linux go build \
+		-ldflags "-s -w -X main.Version=${VERSION} -X main.GitCommit=${GIT_COMMIT} -X main.BuildDate=${BUILD_DATE}" \
+		-o /dyndns ./cmd/dyndns
 
 # Stage 3: Final image
 FROM alpine:3.19
