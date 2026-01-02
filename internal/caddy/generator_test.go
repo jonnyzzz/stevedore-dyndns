@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jonnyzzz/stevedore-dyndns/internal/config"
+	"github.com/jonnyzzz/stevedore-dyndns/internal/discovery"
 	"github.com/jonnyzzz/stevedore-dyndns/internal/mapping"
 )
 
@@ -242,6 +243,47 @@ func TestCaddyfileFormat(t *testing.T) {
 		if !strings.Contains(sampleCaddyfile, pattern) {
 			t.Errorf("Caddyfile should contain %q", pattern)
 		}
+	}
+}
+
+func TestTemplateWebsocketForcesHTTP1(t *testing.T) {
+	templatePath := filepath.Join("..", "..", "Caddyfile.template")
+	cfg := &config.Config{
+		Domain:    "example.com",
+		AcmeEmail: "admin@example.com",
+		LogLevel:  "info",
+	}
+	gen := New(cfg, nil)
+	gen.TemplatePath = templatePath
+
+	gen.UpdateDiscoveredServices([]discovery.Service{
+		{
+			Subdomain: "app",
+			Port:      8080,
+			Websocket: true,
+		},
+	})
+	content, err := gen.GenerateContent()
+	if err != nil {
+		t.Fatalf("GenerateContent failed: %v", err)
+	}
+	if !strings.Contains(content, "transport http") || !strings.Contains(content, "versions h1") {
+		t.Error("Expected websocket transport to force HTTP/1.1")
+	}
+
+	gen.UpdateDiscoveredServices([]discovery.Service{
+		{
+			Subdomain: "plain",
+			Port:      8081,
+			Websocket: false,
+		},
+	})
+	content, err = gen.GenerateContent()
+	if err != nil {
+		t.Fatalf("GenerateContent failed: %v", err)
+	}
+	if strings.Contains(content, "transport http") {
+		t.Error("Unexpected HTTP/1 transport for non-websocket service")
 	}
 }
 

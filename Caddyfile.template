@@ -53,6 +53,9 @@
             # WebSocket support
             header_up Connection {>Connection}
             header_up Upgrade {>Upgrade}
+            transport http {
+                versions h1
+            }
             {{end}}
             {{if not .Options.BufferRequests}}
             flush_interval -1
