@@ -244,19 +244,9 @@ func (c *Client) GetSSLMode(ctx context.Context) (string, error) {
 // When enabled, Cloudflare presents a client certificate when connecting to the origin.
 // The origin should validate this certificate to ensure requests come from Cloudflare.
 func (c *Client) SetAuthenticatedOriginPull(ctx context.Context, enabled bool) error {
-	rc := cloudflare.ZoneIdentifier(c.zoneID)
-
-	value := "off"
-	if enabled {
-		value = "on"
-	}
-
-	_, err := c.api.UpdateZoneSetting(ctx, rc, cloudflare.UpdateZoneSettingParams{
-		Name:  "tls_client_auth",
-		Value: value,
-	})
+	_, err := c.api.SetPerZoneAuthenticatedOriginPullsStatus(ctx, c.zoneID, enabled)
 	if err != nil {
-		return fmt.Errorf("failed to set Authenticated Origin Pull to %q: %w", value, err)
+		return fmt.Errorf("failed to set Authenticated Origin Pull to %v: %w", enabled, err)
 	}
 
 	slog.Info("Set Cloudflare Authenticated Origin Pull", "enabled", enabled, "zone_id", c.zoneID)
@@ -265,19 +255,11 @@ func (c *Client) SetAuthenticatedOriginPull(ctx context.Context, enabled bool) e
 
 // IsAuthenticatedOriginPullEnabled returns whether Authenticated Origin Pull is enabled.
 func (c *Client) IsAuthenticatedOriginPullEnabled(ctx context.Context) (bool, error) {
-	rc := cloudflare.ZoneIdentifier(c.zoneID)
-
-	setting, err := c.api.GetZoneSetting(ctx, rc, cloudflare.GetZoneSettingParams{
-		Name: "tls_client_auth",
-	})
+	status, err := c.api.GetPerZoneAuthenticatedOriginPullsStatus(ctx, c.zoneID)
 	if err != nil {
 		return false, fmt.Errorf("failed to get Authenticated Origin Pull status: %w", err)
 	}
-
-	if value, ok := setting.Value.(string); ok {
-		return value == "on", nil
-	}
-	return false, fmt.Errorf("unexpected tls_client_auth value type: %T", setting.Value)
+	return status.Enabled, nil
 }
 
 // ConfigureForProxyMode ensures Cloudflare is properly configured for proxy mode.
