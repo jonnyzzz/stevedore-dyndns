@@ -19,8 +19,9 @@ type Config struct {
 	DNSTTL int // TTL for DNS records in seconds
 
 	// Domain settings
-	Domain    string
-	AcmeEmail string
+	Domain          string
+	AcmeEmail       string
+	SubdomainPrefix bool // Use prefix mode (app-zone.example.com instead of app.zone.example.com)
 
 	// Fritzbox settings for TR-064/UPnP
 	FritzboxHost     string
@@ -79,6 +80,9 @@ func Load() (*Config, error) {
 
 	// Parse Cloudflare proxy mode
 	cfg.CloudflareProxy = parseBool(os.Getenv("CLOUDFLARE_PROXY"))
+
+	// Parse subdomain prefix mode (for Cloudflare Universal SSL compatibility)
+	cfg.SubdomainPrefix = parseBool(os.Getenv("SUBDOMAIN_PREFIX"))
 
 	// Parse DNS TTL (default to IP check interval in seconds, minimum 60)
 	if ttlStr := os.Getenv("DNS_TTL"); ttlStr != "" {
@@ -151,6 +155,36 @@ func (c *Config) UseManualIP() bool {
 // UseDiscovery returns true if stevedore discovery is configured
 func (c *Config) UseDiscovery() bool {
 	return c.StevedoreToken != ""
+}
+
+// GetSubdomainFQDN returns the full domain name for a subdomain.
+// In prefix mode: subdomain-basedomain.parent.com (e.g., app-zone.example.com)
+// In normal mode: subdomain.domain (e.g., app.zone.example.com)
+func (c *Config) GetSubdomainFQDN(subdomain string) string {
+	if c.SubdomainPrefix {
+		// Extract the parent domain (everything after first dot)
+		parts := strings.SplitN(c.Domain, ".", 2)
+		if len(parts) == 2 {
+			// Convert subdomain.zone -> subdomain-zone.parent
+			return subdomain + "-" + parts[0] + "." + parts[1]
+		}
+		// Fallback for single-part domains
+		return subdomain + "-" + c.Domain
+	}
+	return subdomain + "." + c.Domain
+}
+
+// GetBaseDomain returns the parent domain for DNS record creation in prefix mode.
+// In prefix mode, subdomains like app-zone.example.com are direct children of example.com.
+// In normal mode, returns the configured domain.
+func (c *Config) GetBaseDomain() string {
+	if c.SubdomainPrefix {
+		parts := strings.SplitN(c.Domain, ".", 2)
+		if len(parts) == 2 {
+			return parts[1]
+		}
+	}
+	return c.Domain
 }
 
 func getEnvDefault(key, defaultValue string) string {

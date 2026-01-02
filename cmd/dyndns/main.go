@@ -273,34 +273,36 @@ func updateSubdomainRecords(
 	// Get active subdomains from Caddy config
 	activeSubdomains := caddyGen.GetActiveSubdomains()
 
-	// Create a set for quick lookup
-	activeSet := make(map[string]bool)
+	// Create a set for quick lookup (stores FQDNs)
+	activeFQDNs := make(map[string]bool)
 	for _, sub := range activeSubdomains {
-		activeSet[sub] = true
+		fqdn := cfg.GetSubdomainFQDN(sub)
+		activeFQDNs[fqdn] = true
 	}
 
 	slog.Info("Updating subdomain DNS records",
 		"proxy_mode", true,
+		"prefix_mode", cfg.SubdomainPrefix,
 		"active_subdomains", len(activeSubdomains),
 	)
 
 	// Update records for each active subdomain
 	for _, subdomain := range activeSubdomains {
-		fqdn := subdomain + "." + cfg.Domain
+		fqdn := cfg.GetSubdomainFQDN(subdomain)
 
 		if ipv4 != "" {
 			if err := cfClient.UpdateRecord(ctx, fqdn, "A", ipv4); err != nil {
-				slog.Error("Failed to update subdomain A record", "subdomain", subdomain, "error", err)
+				slog.Error("Failed to update subdomain A record", "subdomain", subdomain, "fqdn", fqdn, "error", err)
 			} else {
-				slog.Debug("Updated subdomain A record", "subdomain", subdomain, "fqdn", fqdn)
+				slog.Info("Updated subdomain A record", "subdomain", subdomain, "fqdn", fqdn)
 			}
 		}
 
 		if ipv6 != "" {
 			if err := cfClient.UpdateRecord(ctx, fqdn, "AAAA", ipv6); err != nil {
-				slog.Error("Failed to update subdomain AAAA record", "subdomain", subdomain, "error", err)
+				slog.Error("Failed to update subdomain AAAA record", "subdomain", subdomain, "fqdn", fqdn, "error", err)
 			} else {
-				slog.Debug("Updated subdomain AAAA record", "subdomain", subdomain, "fqdn", fqdn)
+				slog.Info("Updated subdomain AAAA record", "subdomain", subdomain, "fqdn", fqdn)
 			}
 		}
 	}
@@ -313,14 +315,16 @@ func updateSubdomainRecords(
 	}
 
 	for _, existing := range existingSubdomains {
-		if !activeSet[existing] {
-			fqdn := existing + "." + cfg.Domain
-			slog.Info("Removing stale subdomain DNS record", "subdomain", existing)
+		// Construct FQDN for the existing record
+		existingFQDN := existing + "." + cfClient.Domain()
 
-			if err := cfClient.DeleteRecord(ctx, fqdn, "A"); err != nil {
+		if !activeFQDNs[existingFQDN] {
+			slog.Info("Removing stale subdomain DNS record", "subdomain", existing, "fqdn", existingFQDN)
+
+			if err := cfClient.DeleteRecord(ctx, existingFQDN, "A"); err != nil {
 				slog.Error("Failed to delete stale A record", "subdomain", existing, "error", err)
 			}
-			if err := cfClient.DeleteRecord(ctx, fqdn, "AAAA"); err != nil {
+			if err := cfClient.DeleteRecord(ctx, existingFQDN, "AAAA"); err != nil {
 				slog.Error("Failed to delete stale AAAA record", "subdomain", existing, "error", err)
 			}
 		}

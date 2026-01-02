@@ -20,8 +20,17 @@
     }
 }
 
-# Wildcard certificate for the domain
+# Certificate configuration
+# In prefix mode: certificates for basedomain.com (parent of zone.basedomain.com)
+# In normal mode: wildcard certificate for *.domain and domain itself
+{{if .SubdomainPrefix}}
+# Prefix mode: service subdomains are direct children of {{.BaseDomain}}
+# e.g., app-zone.example.com instead of app.zone.example.com
+*.{{.BaseDomain}}, {{.Domain}} {
+{{else}}
+# Normal mode: wildcard subdomain certificate
 *.{{.Domain}}, {{.Domain}} {
+{{end}}
     # TLS with Cloudflare DNS challenge for wildcard cert
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
@@ -29,7 +38,7 @@
 
     # Dynamic routing based on subdomain
     {{range .Mappings}}
-    @{{.Subdomain}} host {{.Subdomain}}.{{$.Domain}}
+    @{{.Subdomain}} host {{.FQDN}}
     handle @{{.Subdomain}} {
         reverse_proxy {{.Target}} {
             {{if .Options.Websocket}}

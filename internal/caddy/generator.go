@@ -25,15 +25,18 @@ type Generator struct {
 
 // TemplateData contains data passed to the Caddyfile template
 type TemplateData struct {
-	Domain    string
-	AcmeEmail string
-	LogLevel  string
-	Mappings  []MappingData
+	Domain          string
+	AcmeEmail       string
+	LogLevel        string
+	SubdomainPrefix bool   // Use prefix mode (subdomain-basedomain.parent)
+	BaseDomain      string // Parent domain in prefix mode (e.g., example.com)
+	Mappings        []MappingData
 }
 
 // MappingData represents a mapping in the template
 type MappingData struct {
-	Subdomain string
+	Subdomain string // Original subdomain name (for @matcher naming)
+	FQDN      string // Full domain name (e.g., app-zone.example.com)
 	Target    string
 	Options   mapping.MappingOptions
 }
@@ -80,10 +83,12 @@ func (g *Generator) Generate() error {
 	mappingData := g.collectMappings()
 
 	data := TemplateData{
-		Domain:    g.cfg.Domain,
-		AcmeEmail: g.cfg.AcmeEmail,
-		LogLevel:  g.cfg.LogLevel,
-		Mappings:  mappingData,
+		Domain:          g.cfg.Domain,
+		AcmeEmail:       g.cfg.AcmeEmail,
+		LogLevel:        g.cfg.LogLevel,
+		SubdomainPrefix: g.cfg.SubdomainPrefix,
+		BaseDomain:      g.cfg.GetBaseDomain(),
+		Mappings:        mappingData,
 	}
 
 	// Execute template
@@ -151,6 +156,7 @@ func (g *Generator) collectMappings() []MappingData {
 		seen[svc.Subdomain] = true
 		result = append(result, MappingData{
 			Subdomain: svc.Subdomain,
+			FQDN:      g.cfg.GetSubdomainFQDN(svc.Subdomain),
 			Target:    svc.GetTarget(),
 			Options: mapping.MappingOptions{
 				Websocket:  svc.Websocket,
@@ -170,6 +176,7 @@ func (g *Generator) collectMappings() []MappingData {
 			seen[m.Subdomain] = true
 			result = append(result, MappingData{
 				Subdomain: m.Subdomain,
+				FQDN:      g.cfg.GetSubdomainFQDN(m.Subdomain),
 				Target:    m.GetTarget(),
 				Options:   m.Options,
 			})

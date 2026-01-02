@@ -55,8 +55,11 @@ services:
       # Optional - Cloudflare settings
       # DNS_TTL: TTL in seconds (default: same as IP_CHECK_INTERVAL, min 60)
       # CLOUDFLARE_PROXY: true to enable Cloudflare proxy (orange cloud)
+      # SUBDOMAIN_PREFIX: true to use prefix mode (app-zone.parent.com instead of app.zone.parent.com)
+      #   Required when using Cloudflare proxy with multi-level subdomains (Universal SSL limitation)
       - DNS_TTL=${DNS_TTL:-}
       - CLOUDFLARE_PROXY=${CLOUDFLARE_PROXY:-false}
+      - SUBDOMAIN_PREFIX=${SUBDOMAIN_PREFIX:-false}
 
       # Internal paths (set by Stevedore or use defaults for local dev)
       - DYNDNS_DATA=${STEVEDORE_DATA:-./data}
