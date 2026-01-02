@@ -13,9 +13,11 @@ import (
 
 // Client wraps the Cloudflare API client
 type Client struct {
-	api    *cloudflare.API
-	zoneID string
-	domain string
+	api     *cloudflare.API
+	zoneID  string
+	domain  string
+	proxied bool // Cloudflare proxy mode (orange cloud)
+	ttl     int  // DNS record TTL in seconds
 
 	// Cache of record IDs to avoid lookups
 	recordCache map[string]string
@@ -33,6 +35,8 @@ func New(cfg *config.Config) (*Client, error) {
 		api:         api,
 		zoneID:      cfg.CloudflareZoneID,
 		domain:      cfg.Domain,
+		proxied:     cfg.CloudflareProxy,
+		ttl:         cfg.DNSTTL,
 		recordCache: make(map[string]string),
 	}, nil
 }
@@ -87,6 +91,12 @@ func (c *Client) UpdateRecord(ctx context.Context, name string, recordType strin
 		}
 	}
 
+	// Cloudflare uses TTL=1 for "automatic" when proxied
+	ttl := c.ttl
+	if c.proxied {
+		ttl = 1 // Automatic TTL when proxied
+	}
+
 	if recordID != "" {
 		// Update existing record
 		_, err := c.api.UpdateDNSRecord(ctx, rc, cloudflare.UpdateDNSRecordParams{
@@ -94,21 +104,21 @@ func (c *Client) UpdateRecord(ctx context.Context, name string, recordType strin
 			Type:    recordType,
 			Name:    name,
 			Content: content,
-			TTL:     300, // 5 minutes
-			Proxied: cloudflare.BoolPtr(false),
+			TTL:     ttl,
+			Proxied: cloudflare.BoolPtr(c.proxied),
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update DNS record: %w", err)
 		}
-		slog.Debug("Updated DNS record", "name", name, "type", recordType, "content", content)
+		slog.Debug("Updated DNS record", "name", name, "type", recordType, "content", content, "ttl", ttl, "proxied", c.proxied)
 	} else {
 		// Create new record
 		record, err := c.api.CreateDNSRecord(ctx, rc, cloudflare.CreateDNSRecordParams{
 			Type:    recordType,
 			Name:    name,
 			Content: content,
-			TTL:     300,
-			Proxied: cloudflare.BoolPtr(false),
+			TTL:     ttl,
+			Proxied: cloudflare.BoolPtr(c.proxied),
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create DNS record: %w", err)
@@ -116,7 +126,7 @@ func (c *Client) UpdateRecord(ctx context.Context, name string, recordType strin
 		c.cacheMu.Lock()
 		c.recordCache[cacheKey] = record.ID
 		c.cacheMu.Unlock()
-		slog.Debug("Created DNS record", "name", name, "type", recordType, "content", content, "id", record.ID)
+		slog.Debug("Created DNS record", "name", name, "type", recordType, "content", content, "id", record.ID, "ttl", ttl, "proxied", c.proxied)
 	}
 
 	return nil

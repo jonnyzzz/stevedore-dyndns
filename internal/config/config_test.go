@@ -250,6 +250,142 @@ func TestLoad_DiscoverySettings(t *testing.T) {
 	}
 }
 
+func TestLoad_DNSTTLSettings(t *testing.T) {
+	t.Run("default TTL matches IP check interval", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("IP_CHECK_INTERVAL", "5m")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() unexpected error: %v", err)
+		}
+
+		// 5 minutes = 300 seconds
+		if cfg.DNSTTL != 300 {
+			t.Errorf("DNSTTL = %d, want %d", cfg.DNSTTL, 300)
+		}
+	})
+
+	t.Run("minimum TTL is 60 seconds", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("IP_CHECK_INTERVAL", "30s")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() unexpected error: %v", err)
+		}
+
+		// Should be clamped to minimum 60
+		if cfg.DNSTTL != 60 {
+			t.Errorf("DNSTTL = %d, want %d (minimum)", cfg.DNSTTL, 60)
+		}
+	})
+
+	t.Run("custom TTL from env", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("DNS_TTL", "120")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() unexpected error: %v", err)
+		}
+
+		if cfg.DNSTTL != 120 {
+			t.Errorf("DNSTTL = %d, want %d", cfg.DNSTTL, 120)
+		}
+	})
+
+	t.Run("custom TTL clamped to minimum", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("DNS_TTL", "30")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() unexpected error: %v", err)
+		}
+
+		if cfg.DNSTTL != 60 {
+			t.Errorf("DNSTTL = %d, want %d (minimum)", cfg.DNSTTL, 60)
+		}
+	})
+
+	t.Run("invalid TTL returns error", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("DNS_TTL", "not-a-number")
+
+		_, err := Load()
+		if err == nil {
+			t.Error("Load() expected error for invalid DNS_TTL, got nil")
+		}
+	})
+}
+
+func TestLoad_CloudflareProxySettings(t *testing.T) {
+	t.Run("default proxy is false", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() unexpected error: %v", err)
+		}
+
+		if cfg.CloudflareProxy {
+			t.Error("CloudflareProxy = true, want false (default)")
+		}
+	})
+
+	t.Run("proxy enabled with true", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("CLOUDFLARE_PROXY", "true")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() unexpected error: %v", err)
+		}
+
+		if !cfg.CloudflareProxy {
+			t.Error("CloudflareProxy = false, want true")
+		}
+	})
+
+	t.Run("proxy enabled with 1", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("CLOUDFLARE_PROXY", "1")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() unexpected error: %v", err)
+		}
+
+		if !cfg.CloudflareProxy {
+			t.Error("CloudflareProxy = false, want true (for '1')")
+		}
+	})
+
+	t.Run("proxy enabled with yes", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("CLOUDFLARE_PROXY", "yes")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() unexpected error: %v", err)
+		}
+
+		if !cfg.CloudflareProxy {
+			t.Error("CloudflareProxy = false, want true (for 'yes')")
+		}
+	})
+}
+
 func TestConfig_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -450,6 +586,7 @@ func clearEnv() {
 	envVars := []string{
 		"CLOUDFLARE_API_TOKEN",
 		"CLOUDFLARE_ZONE_ID",
+		"CLOUDFLARE_PROXY",
 		"DOMAIN",
 		"ACME_EMAIL",
 		"FRITZBOX_HOST",
@@ -458,6 +595,7 @@ func clearEnv() {
 		"MANUAL_IPV4",
 		"MANUAL_IPV6",
 		"IP_CHECK_INTERVAL",
+		"DNS_TTL",
 		"LOG_LEVEL",
 		"DYNDNS_DATA",
 		"DYNDNS_LOGS",

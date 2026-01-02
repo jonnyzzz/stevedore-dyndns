@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -11,6 +13,10 @@ type Config struct {
 	// Cloudflare settings
 	CloudflareAPIToken string
 	CloudflareZoneID   string
+	CloudflareProxy    bool // Enable Cloudflare proxy (orange cloud)
+
+	// DNS settings
+	DNSTTL int // TTL for DNS records in seconds
 
 	// Domain settings
 	Domain    string
@@ -70,6 +76,28 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid IP_CHECK_INTERVAL: %w", err)
 	}
 	cfg.IPCheckInterval = interval
+
+	// Parse Cloudflare proxy mode
+	cfg.CloudflareProxy = parseBool(os.Getenv("CLOUDFLARE_PROXY"))
+
+	// Parse DNS TTL (default to IP check interval in seconds, minimum 60)
+	if ttlStr := os.Getenv("DNS_TTL"); ttlStr != "" {
+		ttl, err := strconv.Atoi(ttlStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid DNS_TTL: %w", err)
+		}
+		if ttl < 60 {
+			ttl = 60 // Cloudflare minimum for non-proxied records
+		}
+		cfg.DNSTTL = ttl
+	} else {
+		// Default to IP check interval (in seconds), minimum 60
+		ttl := int(interval.Seconds())
+		if ttl < 60 {
+			ttl = 60
+		}
+		cfg.DNSTTL = ttl
+	}
 
 	// Set derived paths - prefer shared directory for cross-deployment communication
 	// Check shared dir first (Stevedore standard), fallback to data dir
@@ -135,4 +163,10 @@ func getEnvDefault(key, defaultValue string) string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// parseBool parses common boolean string representations
+func parseBool(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return s == "true" || s == "1" || s == "yes" || s == "on"
 }

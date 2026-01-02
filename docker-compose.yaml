@@ -52,6 +52,12 @@ services:
       - IP_CHECK_INTERVAL=${IP_CHECK_INTERVAL:-5m}
       - LOG_LEVEL=${LOG_LEVEL:-info}
 
+      # Optional - Cloudflare settings
+      # DNS_TTL: TTL in seconds (default: same as IP_CHECK_INTERVAL, min 60)
+      # CLOUDFLARE_PROXY: true to enable Cloudflare proxy (orange cloud)
+      - DNS_TTL=${DNS_TTL:-}
+      - CLOUDFLARE_PROXY=${CLOUDFLARE_PROXY:-false}
+
       # Internal paths (set by Stevedore or use defaults for local dev)
       - DYNDNS_DATA=${STEVEDORE_DATA:-./data}
       - DYNDNS_LOGS=${STEVEDORE_LOGS:-./logs}
