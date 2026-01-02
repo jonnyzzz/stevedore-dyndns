@@ -72,14 +72,56 @@ This service acts as an ingress controller for Stevedore-managed services, provi
 | `MANUAL_IPV6` | No | Manual IPv6 override |
 | `IP_CHECK_INTERVAL` | No | IP check interval (default: `5m`) |
 | `LOG_LEVEL` | No | Log level: debug, info, warn, error (default: `info`) |
+| `CLOUDFLARE_PROXY` | No | Enable Cloudflare proxy mode with mTLS (default: `false`) |
+| `SUBDOMAIN_PREFIX` | No | Use prefix mode for subdomains (default: `false`) |
+| `DNS_TTL` | No | DNS record TTL in seconds (default: IP check interval, min 60) |
+
+### Cloudflare Proxy Mode
+
+When `CLOUDFLARE_PROXY=true`, the service operates in Cloudflare proxy mode:
+
+1. **Orange Cloud Enabled**: All DNS records are proxied through Cloudflare
+2. **SSL Full Mode**: Cloudflare connects to origin on port 443 (automatically configured)
+3. **Authenticated Origin Pull (mTLS)**: Only Cloudflare can connect to your origin
+4. **IPv4 Only for Subdomains**: Cloudflare handles IPv6 for clients automatically
+5. **No Root Domain Records**: Only creates DNS records for active subdomains
+
+This mode provides:
+- DDoS protection via Cloudflare
+- SSL termination at Cloudflare edge
+- Origin protection (rejects non-Cloudflare connections)
+- Universal SSL for subdomains
+
+### Subdomain Prefix Mode
+
+When `SUBDOMAIN_PREFIX=true`, subdomains use the prefix format for Cloudflare Universal SSL compatibility:
+- Normal: `app.zone.example.com` (requires wildcard SSL)
+- Prefix: `app-zone.example.com` (covered by Universal SSL)
+
+This is required when:
+- Using Cloudflare proxy mode (orange cloud)
+- Your domain is a subdomain itself (e.g., `zone.example.com`)
+- You want Universal SSL coverage (no additional certificate purchase)
 
 ### Cloudflare API Token Permissions
 
 Create a custom API token at https://dash.cloudflare.com/profile/api-tokens with:
+
+**Basic (DNS only):**
 - **Zone:Zone:Read** - Read zone information
 - **Zone:DNS:Edit** - Edit DNS records
 
+**Full (with proxy mode auto-configuration):**
+- **Zone:Zone:Read** - Read zone information
+- **Zone:DNS:Edit** - Edit DNS records
+- **Zone:Zone Settings:Edit** - Configure SSL mode
+- **Zone:SSL and Certificates:Edit** - Enable Authenticated Origin Pull
+
 Restrict to specific zone(s) for minimal permissions.
+
+**Note**: If the token lacks SSL permissions, the service will still work but won't auto-configure Cloudflare SSL settings. You'll need to manually configure:
+- SSL/TLS encryption mode: "Full" or "Full (strict)"
+- Authenticated Origin Pulls: Enabled
 
 ### Mapping Table (`data/mappings.yaml`)
 

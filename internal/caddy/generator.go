@@ -30,6 +30,7 @@ type TemplateData struct {
 	LogLevel        string
 	SubdomainPrefix bool   // Use prefix mode (subdomain-basedomain.parent)
 	BaseDomain      string // Parent domain in prefix mode (e.g., example.com)
+	CloudflareProxy bool   // Use Cloudflare proxy mode with mTLS
 	Mappings        []MappingData
 }
 
@@ -88,6 +89,7 @@ func (g *Generator) Generate() error {
 		LogLevel:        g.cfg.LogLevel,
 		SubdomainPrefix: g.cfg.SubdomainPrefix,
 		BaseDomain:      g.cfg.GetBaseDomain(),
+		CloudflareProxy: g.cfg.CloudflareProxy,
 		Mappings:        mappingData,
 	}
 

@@ -69,6 +69,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Configure Cloudflare for proxy mode if enabled
+	if cfg.CloudflareProxy {
+		slog.Info("Cloudflare proxy mode enabled, configuring SSL and mTLS...")
+		if err := cfClient.ConfigureForProxyMode(ctx); err != nil {
+			slog.Error("Failed to configure Cloudflare for proxy mode", "error", err)
+			// Don't exit - this might fail if token doesn't have zone settings permissions
+			// The service can still work, it just won't auto-configure Cloudflare
+		}
+	}
+
 	// Mapping manager (for backwards compatibility with YAML files)
 	var mappingMgr *mapping.Manager
 	if !cfg.UseDiscovery() {
@@ -220,20 +230,28 @@ func updateIPAndDNS(
 		"ipv6", ipv6,
 	)
 
-	// Update root domain DNS records
-	if ipv4 != "" {
-		if err := cfClient.UpdateRecord(ctx, cfg.Domain, "A", ipv4); err != nil {
-			slog.Error("Failed to update A record", "error", err)
-		} else {
-			slog.Info("Updated A record", "domain", cfg.Domain, "ip", ipv4)
+	// Handle DNS records based on proxy mode
+	if cfClient.IsProxied() {
+		// Proxy mode: Only update individual subdomain records
+		// We don't need root domain records in proxy mode - only the specific
+		// subdomains that services are using get DNS records
+		slog.Debug("Proxy mode: skipping root domain DNS records, updating subdomains only")
+	} else {
+		// Direct mode: Update root domain DNS records
+		if ipv4 != "" {
+			if err := cfClient.UpdateRecord(ctx, cfg.Domain, "A", ipv4); err != nil {
+				slog.Error("Failed to update A record", "error", err)
+			} else {
+				slog.Info("Updated A record", "domain", cfg.Domain, "ip", ipv4)
+			}
 		}
-	}
 
-	if ipv6 != "" {
-		if err := cfClient.UpdateRecord(ctx, cfg.Domain, "AAAA", ipv6); err != nil {
-			slog.Error("Failed to update AAAA record", "error", err)
-		} else {
-			slog.Info("Updated AAAA record", "domain", cfg.Domain, "ip", ipv6)
+		if ipv6 != "" {
+			if err := cfClient.UpdateRecord(ctx, cfg.Domain, "AAAA", ipv6); err != nil {
+				slog.Error("Failed to update AAAA record", "error", err)
+			} else {
+				slog.Info("Updated AAAA record", "domain", cfg.Domain, "ip", ipv6)
+			}
 		}
 	}
 

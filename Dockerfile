@@ -30,6 +30,12 @@ COPY --from=go-builder /dyndns /usr/bin/dyndns
 # Copy configuration templates
 COPY Caddyfile.template /etc/caddy/Caddyfile.template
 
+# Download Cloudflare Authenticated Origin Pull CA certificate for mTLS
+# This certificate is used to verify that connections come from Cloudflare
+RUN mkdir -p /etc/cloudflare && \
+    wget -q -O /etc/cloudflare/origin-pull-ca.pem \
+    https://developers.cloudflare.com/ssl/static/authenticated_origin_pull_ca.pem
+
 # Create directories
 RUN mkdir -p /data /config /var/log/dyndns
 

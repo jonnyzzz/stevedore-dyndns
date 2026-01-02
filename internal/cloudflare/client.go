@@ -205,6 +205,98 @@ func (c *Client) Domain() string {
 	return c.domain
 }
 
+// SetSSLMode sets the SSL/TLS encryption mode for the zone.
+// Valid values: "off", "flexible", "full", "strict" (for Full Strict)
+// For Cloudflare proxy mode, "full" or "strict" is required to connect to origin on port 443.
+func (c *Client) SetSSLMode(ctx context.Context, mode string) error {
+	rc := cloudflare.ZoneIdentifier(c.zoneID)
+
+	_, err := c.api.UpdateZoneSetting(ctx, rc, cloudflare.UpdateZoneSettingParams{
+		Name:  "ssl",
+		Value: mode,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set SSL mode to %q: %w", mode, err)
+	}
+
+	slog.Info("Set Cloudflare SSL mode", "mode", mode, "zone_id", c.zoneID)
+	return nil
+}
+
+// GetSSLMode returns the current SSL/TLS encryption mode for the zone.
+func (c *Client) GetSSLMode(ctx context.Context) (string, error) {
+	rc := cloudflare.ZoneIdentifier(c.zoneID)
+
+	setting, err := c.api.GetZoneSetting(ctx, rc, cloudflare.GetZoneSettingParams{
+		Name: "ssl",
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to get SSL mode: %w", err)
+	}
+
+	if mode, ok := setting.Value.(string); ok {
+		return mode, nil
+	}
+	return "", fmt.Errorf("unexpected SSL mode value type: %T", setting.Value)
+}
+
+// SetAuthenticatedOriginPull enables or disables Authenticated Origin Pull (mTLS).
+// When enabled, Cloudflare presents a client certificate when connecting to the origin.
+// The origin should validate this certificate to ensure requests come from Cloudflare.
+func (c *Client) SetAuthenticatedOriginPull(ctx context.Context, enabled bool) error {
+	rc := cloudflare.ZoneIdentifier(c.zoneID)
+
+	value := "off"
+	if enabled {
+		value = "on"
+	}
+
+	_, err := c.api.UpdateZoneSetting(ctx, rc, cloudflare.UpdateZoneSettingParams{
+		Name:  "tls_client_auth",
+		Value: value,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set Authenticated Origin Pull to %q: %w", value, err)
+	}
+
+	slog.Info("Set Cloudflare Authenticated Origin Pull", "enabled", enabled, "zone_id", c.zoneID)
+	return nil
+}
+
+// IsAuthenticatedOriginPullEnabled returns whether Authenticated Origin Pull is enabled.
+func (c *Client) IsAuthenticatedOriginPullEnabled(ctx context.Context) (bool, error) {
+	rc := cloudflare.ZoneIdentifier(c.zoneID)
+
+	setting, err := c.api.GetZoneSetting(ctx, rc, cloudflare.GetZoneSettingParams{
+		Name: "tls_client_auth",
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to get Authenticated Origin Pull status: %w", err)
+	}
+
+	if value, ok := setting.Value.(string); ok {
+		return value == "on", nil
+	}
+	return false, fmt.Errorf("unexpected tls_client_auth value type: %T", setting.Value)
+}
+
+// ConfigureForProxyMode ensures Cloudflare is properly configured for proxy mode.
+// It sets SSL mode to "full" and enables Authenticated Origin Pull.
+func (c *Client) ConfigureForProxyMode(ctx context.Context) error {
+	// Set SSL mode to "full" (connects to origin on port 443)
+	// Using "full" instead of "strict" because origin may use self-signed or Cloudflare Origin CA certs
+	if err := c.SetSSLMode(ctx, "full"); err != nil {
+		return fmt.Errorf("failed to set SSL mode: %w", err)
+	}
+
+	// Enable Authenticated Origin Pull (mTLS)
+	if err := c.SetAuthenticatedOriginPull(ctx, true); err != nil {
+		return fmt.Errorf("failed to enable Authenticated Origin Pull: %w", err)
+	}
+
+	return nil
+}
+
 // GetManagedSubdomainRecords returns all subdomain DNS records managed by this service.
 // It looks for A and AAAA records that are subdomains of the configured domain.
 func (c *Client) GetManagedSubdomainRecords(ctx context.Context) ([]string, error) {

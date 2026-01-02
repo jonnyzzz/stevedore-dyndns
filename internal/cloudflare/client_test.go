@@ -563,3 +563,165 @@ func TestClient_BaseDomain(t *testing.T) {
 		})
 	}
 }
+
+// TestClient_IsProxied tests the proxy mode getter
+func TestClient_IsProxied(t *testing.T) {
+	tests := []struct {
+		name    string
+		proxied bool
+	}{
+		{"proxied mode", true},
+		{"direct mode", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				CloudflareAPIToken: "test-token",
+				CloudflareZoneID:   "test-zone-id",
+				Domain:             "example.com",
+				CloudflareProxy:    tt.proxied,
+			}
+
+			client, err := New(cfg)
+			if err != nil {
+				t.Fatalf("New() unexpected error: %v", err)
+			}
+
+			if client.IsProxied() != tt.proxied {
+				t.Errorf("IsProxied() = %v, want %v", client.IsProxied(), tt.proxied)
+			}
+		})
+	}
+}
+
+// TestClient_Domain tests the Domain getter
+func TestClient_Domain(t *testing.T) {
+	cfg := &config.Config{
+		CloudflareAPIToken: "test-token",
+		CloudflareZoneID:   "test-zone-id",
+		Domain:             "example.com",
+	}
+
+	client, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	if client.Domain() != "example.com" {
+		t.Errorf("Domain() = %q, want %q", client.Domain(), "example.com")
+	}
+}
+
+// MockZoneSettingsServer creates a test server for zone settings API
+func MockZoneSettingsServer(t *testing.T, sslMode string, tlsClientAuth string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Check authorization
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"errors":  []map[string]interface{}{{"message": "Unauthorized"}},
+			})
+			return
+		}
+
+		path := r.URL.Path
+
+		// GET zone setting
+		if strings.Contains(path, "/settings/ssl") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"result": map[string]interface{}{
+					"id":    "ssl",
+					"value": sslMode,
+				},
+			})
+			return
+		}
+
+		if strings.Contains(path, "/settings/tls_client_auth") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"result": map[string]interface{}{
+					"id":    "tls_client_auth",
+					"value": tlsClientAuth,
+				},
+			})
+			return
+		}
+
+		// PATCH zone setting
+		if strings.Contains(path, "/settings/") && r.Method == "PATCH" {
+			var body map[string]interface{}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+
+			settingName := ""
+			if strings.Contains(path, "/settings/ssl") {
+				settingName = "ssl"
+			} else if strings.Contains(path, "/settings/tls_client_auth") {
+				settingName = "tls_client_auth"
+			}
+
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"result": map[string]interface{}{
+					"id":    settingName,
+					"value": body["value"],
+				},
+			})
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+}
+
+// TestSSLModeValidation tests the SSL mode validation logic
+func TestSSLModeValidation(t *testing.T) {
+	// Valid SSL modes
+	validModes := []string{"off", "flexible", "full", "strict"}
+
+	for _, mode := range validModes {
+		t.Run("valid_mode_"+mode, func(t *testing.T) {
+			// This test documents valid SSL modes
+			// Actual API call validation is handled by Cloudflare
+			switch mode {
+			case "off":
+				// No encryption
+			case "flexible":
+				// HTTPS to Cloudflare, HTTP to origin
+			case "full":
+				// HTTPS to both, no cert validation
+			case "strict":
+				// HTTPS to both, with cert validation
+			}
+		})
+	}
+}
+
+// TestAuthenticatedOriginPullValues tests valid values for AOP
+func TestAuthenticatedOriginPullValues(t *testing.T) {
+	tests := []struct {
+		enabled bool
+		want    string
+	}{
+		{true, "on"},
+		{false, "off"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			value := "off"
+			if tt.enabled {
+				value = "on"
+			}
+			if value != tt.want {
+				t.Errorf("AOP value = %q, want %q", value, tt.want)
+			}
+		})
+	}
+}

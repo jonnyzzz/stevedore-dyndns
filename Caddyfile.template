@@ -34,6 +34,14 @@
     # TLS with Cloudflare DNS challenge for wildcard cert
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+{{if .CloudflareProxy}}
+        # Require Cloudflare client certificate for Authenticated Origin Pull (mTLS)
+        # This ensures only Cloudflare can connect to the origin
+        client_auth {
+            mode require_and_verify
+            trusted_ca_cert_file /etc/cloudflare/origin-pull-ca.pem
+        }
+{{end}}
     }
 
     # Dynamic routing based on subdomain
