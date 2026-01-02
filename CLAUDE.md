@@ -75,6 +75,8 @@ This service acts as an ingress controller for Stevedore-managed services, provi
 | `CLOUDFLARE_PROXY` | No | Enable Cloudflare proxy mode with mTLS (default: `false`) |
 | `SUBDOMAIN_PREFIX` | No | Use prefix mode for subdomains (default: `false`) |
 | `DNS_TTL` | No | DNS record TTL in seconds (default: IP check interval, min 60) |
+| `STEVEDORE_SOCKET` | No | Path to stevedore query socket (default: `/var/run/stevedore/query.sock`) |
+| `STEVEDORE_TOKEN` | No | Auth token for service discovery (get via `stevedore token get dyndns`) |
 
 ## Two Operational Modes
 
@@ -254,6 +256,8 @@ mappings:
 stevedore-dyndns/
 ├── CLAUDE.md              # This file (project documentation)
 ├── AGENTS.md              # Symlink to CLAUDE.md
+├── CHANGES.md             # Changelog with release notes
+├── VERSION                # Current version (semver)
 ├── docker-compose.yaml    # Stevedore deployment configuration
 ├── Dockerfile             # Multi-stage build for Caddy + Go service
 ├── Caddyfile.template     # Caddy configuration template
@@ -262,18 +266,20 @@ stevedore-dyndns/
 │       └── main.go        # Main entry point
 ├── internal/
 │   ├── config/            # Configuration loading
-│   ├── cloudflare/        # Cloudflare API client
+│   ├── cloudflare/        # Cloudflare API client (with DNS reconciliation)
+│   ├── discovery/         # Stevedore service discovery client
 │   ├── ipdetect/          # IP detection (TR-064, UPnP, fallbacks)
-│   ├── mapping/           # Mapping table management
+│   ├── mapping/           # Mapping table management (legacy)
 │   └── caddy/             # Caddyfile generation
 ├── scripts/
+│   ├── entrypoint.sh      # Container entrypoint
 │   ├── stevedore-setup.sh # Automated stevedore setup script
-│   └── register-service.sh # Service registration helper
+│   └── register-service.sh # Service registration helper (legacy)
 ├── .github/
 │   └── workflows/
 │       └── ci.yaml        # GitHub Actions CI/CD pipeline
 └── data/                  # Runtime data (gitignored)
-    └── mappings.yaml      # Service mappings (example in repo)
+    └── mappings.yaml      # Service mappings (legacy, use discovery instead)
 ```
 
 ## Stevedore Integration
@@ -322,15 +328,28 @@ stevedore param set dyndns CLOUDFLARE_ZONE_ID "your-zone-id"
 stevedore param set dyndns DOMAIN "example.com"
 stevedore param set dyndns ACME_EMAIL "[email protected]"
 
+# Enable service discovery (recommended)
+stevedore token get dyndns
+stevedore param set dyndns STEVEDORE_TOKEN "<token-from-above>"
+
+# Optional: Enable Cloudflare proxy mode (production recommended)
+stevedore param set dyndns CLOUDFLARE_PROXY true
+stevedore param set dyndns SUBDOMAIN_PREFIX true
+
 # Optional: Configure Fritzbox (default: 192.168.178.1)
 stevedore param set dyndns FRITZBOX_HOST "192.168.178.1"
 
 # Deploy
 stevedore deploy sync dyndns
 stevedore deploy up dyndns
+
+# Verify
+stevedore status dyndns
 ```
 
-### Cross-Deployment Service Registration
+### Cross-Deployment Service Registration (Legacy)
+
+> **Note:** With STEVEDORE_TOKEN configured, services are discovered automatically via Docker labels or stevedore parameters. The methods below are legacy and only needed if automatic discovery is disabled.
 
 Other Stevedore deployments can register their services with dyndns using the shared mappings file.
 
@@ -654,7 +673,7 @@ The Dockerfile injects version info via ldflags:
 
 Version is logged at startup:
 ```json
-{"level":"INFO","msg":"Starting stevedore-dyndns","version":"0.9.0","commit":"abc1234","build_date":"2026-01-02T15:00:00Z"}
+{"level":"INFO","msg":"Starting stevedore-dyndns","version":"0.9.1","commit":"9db62af","build_date":"2026-01-02T18:19:52Z"}
 ```
 
 ## Development Practices
