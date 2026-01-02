@@ -384,18 +384,18 @@ func TestValidateRecordName(t *testing.T) {
 // TestValidateRecordName_DifferentDomains tests validation with various domain configurations
 func TestValidateRecordName_DifferentDomains(t *testing.T) {
 	testCases := []struct {
-		domain      string
-		validNames  []string
+		domain       string
+		validNames   []string
 		invalidNames []string
 	}{
 		{
-			domain:      "example.com",
-			validNames:  []string{"example.com", "sub.example.com", "*.example.com"},
+			domain:       "example.com",
+			validNames:   []string{"example.com", "sub.example.com", "*.example.com"},
 			invalidNames: []string{"example.org", "notexample.com", "com"},
 		},
 		{
-			domain:      "sub.example.com",
-			validNames:  []string{"sub.example.com", "app.sub.example.com"},
+			domain:       "sub.example.com",
+			validNames:   []string{"sub.example.com", "app.sub.example.com"},
 			invalidNames: []string{"example.com", "other.example.com"},
 		},
 	}
@@ -419,6 +419,146 @@ func TestValidateRecordName_DifferentDomains(t *testing.T) {
 				if err := client.validateRecordName(name); err == nil {
 					t.Errorf("domain %q: validateRecordName(%q) should be invalid", tc.domain, name)
 				}
+			}
+		})
+	}
+}
+
+// TestValidateRecordName_PrefixMode tests validation with baseDomain for prefix mode
+// In prefix mode, subdomains like "app-zone.example.com" are valid when domain is "zone.example.com"
+// because baseDomain becomes "example.com"
+func TestValidateRecordName_PrefixMode(t *testing.T) {
+	testCases := []struct {
+		name         string
+		domain       string
+		baseDomain   string
+		validNames   []string
+		invalidNames []string
+	}{
+		{
+			name:       "prefix mode with multi-level domain",
+			domain:     "zone.example.com",
+			baseDomain: "example.com",
+			validNames: []string{
+				// Within domain (normal mode records)
+				"zone.example.com",
+				"app.zone.example.com",
+				// Within baseDomain (prefix mode records)
+				"example.com",
+				"app-zone.example.com",
+				"test-zone.example.com",
+				"other.example.com",
+			},
+			invalidNames: []string{
+				"evil.com",
+				"example.org",
+				"notexample.com",
+			},
+		},
+		{
+			name:       "prefix mode same domain and baseDomain",
+			domain:     "example.com",
+			baseDomain: "example.com",
+			validNames: []string{
+				"example.com",
+				"sub.example.com",
+			},
+			invalidNames: []string{
+				"other.org",
+			},
+		},
+		{
+			name:       "empty baseDomain falls back to domain only",
+			domain:     "zone.example.com",
+			baseDomain: "",
+			validNames: []string{
+				"zone.example.com",
+				"app.zone.example.com",
+			},
+			invalidNames: []string{
+				"example.com", // baseDomain empty, so parent not allowed
+				"app-zone.example.com",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{
+				CloudflareAPIToken: "test-token",
+				CloudflareZoneID:   "test-zone-id",
+				Domain:             tc.domain,
+				SubdomainPrefix:    tc.baseDomain != "" && tc.baseDomain != tc.domain,
+			}
+
+			client, err := New(cfg)
+			if err != nil {
+				t.Fatalf("New() unexpected error: %v", err)
+			}
+			// Override baseDomain for testing (normally set from cfg.GetBaseDomain())
+			client.baseDomain = tc.baseDomain
+
+			for _, name := range tc.validNames {
+				if err := client.validateRecordName(name); err != nil {
+					t.Errorf("validateRecordName(%q) should be valid (domain=%q, baseDomain=%q): %v",
+						name, tc.domain, tc.baseDomain, err)
+				}
+			}
+
+			for _, name := range tc.invalidNames {
+				if err := client.validateRecordName(name); err == nil {
+					t.Errorf("validateRecordName(%q) should be invalid (domain=%q, baseDomain=%q)",
+						name, tc.domain, tc.baseDomain)
+				}
+			}
+		})
+	}
+}
+
+// TestClient_BaseDomain tests that baseDomain is set correctly from config
+func TestClient_BaseDomain(t *testing.T) {
+	testCases := []struct {
+		name           string
+		domain         string
+		subdomainPrefix bool
+		wantBaseDomain string
+	}{
+		{
+			name:           "normal mode - baseDomain equals domain",
+			domain:         "example.com",
+			subdomainPrefix: false,
+			wantBaseDomain: "example.com",
+		},
+		{
+			name:           "prefix mode - baseDomain is parent",
+			domain:         "zone.example.com",
+			subdomainPrefix: true,
+			wantBaseDomain: "example.com",
+		},
+		{
+			name:           "prefix mode - single level domain",
+			domain:         "example.com",
+			subdomainPrefix: true,
+			wantBaseDomain: "example.com", // No parent, stays same
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{
+				CloudflareAPIToken: "test-token",
+				CloudflareZoneID:   "test-zone-id",
+				Domain:             tc.domain,
+				SubdomainPrefix:    tc.subdomainPrefix,
+			}
+
+			client, err := New(cfg)
+			if err != nil {
+				t.Fatalf("New() unexpected error: %v", err)
+			}
+
+			if client.baseDomain != tc.wantBaseDomain {
+				t.Errorf("baseDomain = %q, want %q", client.baseDomain, tc.wantBaseDomain)
 			}
 		})
 	}

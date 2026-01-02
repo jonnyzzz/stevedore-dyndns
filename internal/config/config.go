@@ -177,10 +177,12 @@ func (c *Config) GetSubdomainFQDN(subdomain string) string {
 // GetBaseDomain returns the parent domain for DNS record creation in prefix mode.
 // In prefix mode, subdomains like app-zone.example.com are direct children of example.com.
 // In normal mode, returns the configured domain.
+// For single-level domains (like example.com), returns the domain as-is since there's no valid parent.
 func (c *Config) GetBaseDomain() string {
 	if c.SubdomainPrefix {
 		parts := strings.SplitN(c.Domain, ".", 2)
-		if len(parts) == 2 {
+		// Only use parent if it has at least 2 parts (e.g., example.com, not just "com")
+		if len(parts) == 2 && strings.Contains(parts[1], ".") {
 			return parts[1]
 		}
 	}
