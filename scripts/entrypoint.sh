@@ -88,8 +88,20 @@ echo "Starting DynDNS service..."
 /usr/bin/dyndns &
 DYNDNS_PID=$!
 
-# Wait for initial config generation (give it a moment)
-sleep 2
+# Wait for Caddyfile to be generated
+echo "Waiting for Caddyfile generation..."
+for i in $(seq 1 30); do
+    if [ -f /etc/caddy/Caddyfile ]; then
+        echo "Caddyfile ready after ${i}s"
+        break
+    fi
+    sleep 1
+done
+
+if [ ! -f /etc/caddy/Caddyfile ]; then
+    echo "ERROR: Caddyfile not generated after 30s"
+    exit 1
+fi
 
 # Start Caddy
 echo "Starting Caddy reverse proxy..."
