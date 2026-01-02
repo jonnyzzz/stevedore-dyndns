@@ -21,6 +21,11 @@ type Generator struct {
 	// Discovery services (from stevedore socket API)
 	discoveredServices []discovery.Service
 	mu                 sync.RWMutex
+
+	// TemplatePath allows overriding the default template path (for testing)
+	TemplatePath string
+	// TemplateContent allows providing template content directly (for testing)
+	TemplateContent string
 }
 
 // TemplateData contains data passed to the Caddyfile template
@@ -59,11 +64,43 @@ func (g *Generator) UpdateDiscoveredServices(services []discovery.Service) {
 
 // Generate creates the Caddyfile from template and current mappings/services
 func (g *Generator) Generate() error {
-	// Load template
-	tmplPath := "/etc/caddy/Caddyfile.template"
-	tmplContent, err := os.ReadFile(tmplPath)
+	content, err := g.GenerateContent()
 	if err != nil {
-		return fmt.Errorf("failed to read template: %w", err)
+		return err
+	}
+
+	// Write Caddyfile
+	if err := os.WriteFile(g.cfg.CaddyFile, []byte(content), 0644); err != nil {
+		return fmt.Errorf("failed to write Caddyfile: %w", err)
+	}
+
+	slog.Info("Generated Caddyfile", "path", g.cfg.CaddyFile, "mappings", len(g.collectMappings()))
+
+	// Reload Caddy (if running)
+	if err := g.reloadCaddy(); err != nil {
+		slog.Warn("Failed to reload Caddy", "error", err)
+	}
+
+	return nil
+}
+
+// GenerateContent generates the Caddyfile content as a string without writing to disk.
+// This is useful for testing and validation.
+func (g *Generator) GenerateContent() (string, error) {
+	// Get template content
+	var tmplContent string
+	if g.TemplateContent != "" {
+		tmplContent = g.TemplateContent
+	} else {
+		tmplPath := g.TemplatePath
+		if tmplPath == "" {
+			tmplPath = "/etc/caddy/Caddyfile.template"
+		}
+		content, err := os.ReadFile(tmplPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to read template: %w", err)
+		}
+		tmplContent = string(content)
 	}
 
 	funcMap := template.FuncMap{
@@ -75,9 +112,9 @@ func (g *Generator) Generate() error {
 		},
 	}
 
-	tmpl, err := template.New("Caddyfile").Funcs(funcMap).Parse(string(tmplContent))
+	tmpl, err := template.New("Caddyfile").Funcs(funcMap).Parse(tmplContent)
 	if err != nil {
-		return fmt.Errorf("failed to parse template: %w", err)
+		return "", fmt.Errorf("failed to parse template: %w", err)
 	}
 
 	// Prepare template data - combine mappings and discovered services
@@ -96,22 +133,24 @@ func (g *Generator) Generate() error {
 	// Execute template
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return fmt.Errorf("failed to execute template: %w", err)
+		return "", fmt.Errorf("failed to execute template: %w", err)
 	}
 
-	// Write Caddyfile
-	if err := os.WriteFile(g.cfg.CaddyFile, buf.Bytes(), 0644); err != nil {
-		return fmt.Errorf("failed to write Caddyfile: %w", err)
+	return buf.String(), nil
+}
+
+// GetTemplateData returns the template data that would be used for generation.
+// This is useful for testing template rendering.
+func (g *Generator) GetTemplateData() TemplateData {
+	return TemplateData{
+		Domain:          g.cfg.Domain,
+		AcmeEmail:       g.cfg.AcmeEmail,
+		LogLevel:        g.cfg.LogLevel,
+		SubdomainPrefix: g.cfg.SubdomainPrefix,
+		BaseDomain:      g.cfg.GetBaseDomain(),
+		CloudflareProxy: g.cfg.CloudflareProxy,
+		Mappings:        g.collectMappings(),
 	}
-
-	slog.Info("Generated Caddyfile", "path", g.cfg.CaddyFile, "mappings", len(mappingData))
-
-	// Reload Caddy (if running)
-	if err := g.reloadCaddy(); err != nil {
-		slog.Warn("Failed to reload Caddy", "error", err)
-	}
-
-	return nil
 }
 
 // GetActiveSubdomains returns a list of all currently active subdomains

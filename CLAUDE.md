@@ -76,32 +76,130 @@ This service acts as an ingress controller for Stevedore-managed services, provi
 | `SUBDOMAIN_PREFIX` | No | Use prefix mode for subdomains (default: `false`) |
 | `DNS_TTL` | No | DNS record TTL in seconds (default: IP check interval, min 60) |
 
-### Cloudflare Proxy Mode
+## Two Operational Modes
 
-When `CLOUDFLARE_PROXY=true`, the service operates in Cloudflare proxy mode:
+This service supports two distinct operational modes. Choose based on your requirements:
 
-1. **Orange Cloud Enabled**: All DNS records are proxied through Cloudflare
-2. **SSL Full Mode**: Cloudflare connects to origin on port 443 (automatically configured)
-3. **Authenticated Origin Pull (mTLS)**: Only Cloudflare can connect to your origin
-4. **IPv4 Only for Subdomains**: Cloudflare handles IPv6 for clients automatically
-5. **No Root Domain Records**: Only creates DNS records for active subdomains
+---
 
-This mode provides:
-- DDoS protection via Cloudflare
-- SSL termination at Cloudflare edge
-- Origin protection (rejects non-Cloudflare connections)
-- Universal SSL for subdomains
+### Mode 1: Direct Mode (Default)
 
-### Subdomain Prefix Mode
+**Configuration:** `CLOUDFLARE_PROXY=false` (default)
 
-When `SUBDOMAIN_PREFIX=true`, subdomains use the prefix format for Cloudflare Universal SSL compatibility:
-- Normal: `app.zone.example.com` (requires wildcard SSL)
-- Prefix: `app-zone.example.com` (covered by Universal SSL)
+```
+┌─────────────┐      DNS (grey cloud)      ┌─────────────────────┐
+│   Client    │ ──────────────────────────▶│   Your Server       │
+│             │         HTTPS              │   (Caddy + dyndns)  │
+│             │ ──────────────────────────▶│                     │
+└─────────────┘                            └─────────────────────┘
+```
 
-This is required when:
-- Using Cloudflare proxy mode (orange cloud)
-- Your domain is a subdomain itself (e.g., `zone.example.com`)
-- You want Universal SSL coverage (no additional certificate purchase)
+**How it works:**
+- DNS records point directly to your server's public IP (grey cloud in Cloudflare)
+- **Wildcard DNS**: Creates `*.home.example.com` and `home.example.com` A/AAAA records
+- **Let's Encrypt certificates**: Wildcard cert obtained via DNS-01 challenge
+- **TLS termination**: Caddy handles all HTTPS on your server
+- **IP visible**: Your server's IP is visible in DNS lookups
+
+**Best for:**
+- Simple setups with full control over certificates
+- When you don't need DDoS protection
+- When you want direct connections without intermediaries
+
+**Required API token permissions:**
+- Zone:Zone:Read
+- Zone:DNS:Edit
+
+---
+
+### Mode 2: Cloudflare Proxy Mode (Orange Cloud + mTLS)
+
+**Configuration:**
+```bash
+CLOUDFLARE_PROXY=true
+SUBDOMAIN_PREFIX=true   # Required for Universal SSL on sub-subdomains
+```
+
+```
+┌─────────────┐    DNS (orange cloud)    ┌─────────────┐      mTLS       ┌────────────────┐
+│   Client    │ ────────────────────────▶│  Cloudflare │ ───────────────▶│  Your Server   │
+│             │        HTTPS             │   Edge      │   (SSL Full)    │  (Caddy)       │
+└─────────────┘                          └─────────────┘                 └────────────────┘
+                                              │
+                                              │ Authenticated Origin Pull
+                                              │ (client certificate)
+                                              ▼
+                                         Only Cloudflare
+                                         can connect to origin
+```
+
+**How it works:**
+1. **Orange Cloud Enabled**: All DNS records proxied through Cloudflare
+2. **Individual Subdomain Records**: Creates separate A records for each active service (not wildcards)
+3. **SSL Mode "Full"**: Cloudflare connects to your origin on port 443 (auto-configured)
+4. **Authenticated Origin Pull (mTLS)**: Caddy requires Cloudflare's client certificate
+5. **Origin Protection**: Direct connections to your server are rejected (only Cloudflare allowed)
+6. **IPv4 Only to Origin**: Cloudflare provides IPv6 to clients automatically
+
+**Security layers:**
+- DDoS protection via Cloudflare edge network
+- Origin IP hidden from public DNS
+- mTLS ensures only Cloudflare can reach your origin
+- Direct connections get SSL handshake errors
+
+**Best for:**
+- Production deployments needing DDoS protection
+- When you want to hide your origin IP
+- Services exposed to the public internet
+
+**Required API token permissions (for auto-configuration):**
+- Zone:Zone:Read
+- Zone:DNS:Edit
+- Zone:Zone Settings:Edit (for SSL mode)
+- Zone:SSL and Certificates:Edit (for Authenticated Origin Pull)
+
+**Note:** If your token lacks SSL permissions, the service still works but you'll need to manually configure SSL mode and AOP in the Cloudflare dashboard.
+
+---
+
+### Subdomain Prefix Mode (SUBDOMAIN_PREFIX)
+
+**Problem:** Cloudflare Universal SSL (free) only covers single-level subdomains:
+- ✅ `app.example.com` - covered
+- ❌ `app.home.example.com` - NOT covered (requires paid Advanced Certificate Manager)
+
+**Solution:** Enable prefix mode to flatten subdomain hierarchy:
+```bash
+SUBDOMAIN_PREFIX=true
+```
+
+| Without Prefix | With Prefix | SSL Coverage |
+|----------------|-------------|--------------|
+| `app.home.example.com` | `app-home.example.com` | ✅ Free Universal SSL |
+| `api.home.example.com` | `api-home.example.com` | ✅ Free Universal SSL |
+
+**When to use:**
+- Your base domain is already a subdomain (e.g., `home.example.com`)
+- Using Cloudflare proxy mode (required for Universal SSL)
+- You want free SSL without purchasing Advanced Certificate Manager
+
+---
+
+### All Cloudflare Features Used Are FREE
+
+This service only uses features available on Cloudflare's **free plan**:
+- ✅ DNS management (A/AAAA records)
+- ✅ Proxy mode (orange cloud)
+- ✅ Universal SSL (edge certificates)
+- ✅ SSL/TLS encryption mode settings
+- ✅ Authenticated Origin Pull (mTLS) - **FREE on all plans**
+- ✅ DDoS protection (basic)
+
+**No paid features required:**
+- ❌ Advanced Certificate Manager (avoided via prefix mode)
+- ❌ Argo Tunnel
+- ❌ Load Balancing
+- ❌ Rate Limiting (paid tier)
 
 ### Cloudflare API Token Permissions
 
@@ -236,6 +334,23 @@ stevedore deploy up dyndns
 
 Other Stevedore deployments can register their services with dyndns using the shared mappings file.
 
+#### Public URL Configuration
+
+Each service is responsible for configuring its own public URL. Since each service gets its own subdomain, there's no single shared domain that applies to all services. Configure the public URL at the service level:
+
+```bash
+# Example for a service called "roomtone" with subdomain "roomtone"
+# When DOMAIN=home.example.com and SUBDOMAIN_PREFIX=false:
+stevedore param set roomtone PUBLIC_URL "https://roomtone.home.example.com"
+
+# When DOMAIN=home.example.com and SUBDOMAIN_PREFIX=true:
+stevedore param set roomtone PUBLIC_URL "https://roomtone-home.example.com"
+```
+
+The URL pattern depends on your dyndns configuration:
+- **Normal mode** (`SUBDOMAIN_PREFIX=false`): `https://<subdomain>.<DOMAIN>`
+- **Prefix mode** (`SUBDOMAIN_PREFIX=true`): `https://<subdomain>-<zone>.<parent-domain>`
+
 #### Method 1: Registration Script
 
 Use the provided helper script from any deployment:
@@ -342,6 +457,78 @@ The validation runs on every `UpdateRecord` and `DeleteRecord` call, and failure
 - No secrets stored in repository
 - Health endpoint is unauthenticated (by design, for Stevedore monitoring)
 - Consider Cloudflare proxy mode for DDoS protection
+
+## Security Testing
+
+### Automated Security Test Harness
+
+The `pentest-harness/` directory contains Docker-based security tests:
+
+```bash
+cd pentest-harness
+
+# Configure targets
+cp .env.example .env
+# Edit .env with your deployment details
+
+# Run quick tests (connectivity, headers, ports, TLS, Cloudflare proxy)
+./scripts/run_all.sh --quick --proxy
+
+# Run full test suite (includes ZAP, Nuclei)
+./scripts/run_all.sh --proxy
+```
+
+### Test Categories
+
+| Test | Description | Safe for Prod |
+|------|-------------|---------------|
+| Connectivity | DNS resolution, basic HTTP | Yes |
+| HTTP Headers | Security headers (HSTS, CSP, etc.) | Yes |
+| Port Scan | nmap open port detection | Yes |
+| TLS Audit | Protocol/cipher analysis | Yes |
+| Cloudflare Proxy | mTLS verification, origin protection | Yes |
+| ZAP Baseline | OWASP passive web scan | Yes |
+| Nuclei | Template vulnerability checks | Rate-limited |
+| Feroxbuster | Content discovery | Aggressive |
+
+### Cloudflare Proxy Mode Tests
+
+Critical tests for proxy mode (`05_cloudflare_proxy.sh`):
+
+1. **Proxy Active** - Verifies CF-Ray header is present
+2. **mTLS Origin Protection** - Direct connection to origin MUST fail with SSL error
+3. **Connection via Cloudflare** - Normal HTTPS access works
+4. **SSL Mode** - Must be "Full" or "Full (strict)"
+5. **Authenticated Origin Pull** - Must be enabled
+6. **DNS Proxy Status** - DNS must resolve to Cloudflare IPs
+
+### Integration Tests
+
+Run Go integration tests to verify Cloudflare configuration:
+
+```bash
+# Run unit tests
+go test ./internal/cloudflare/... ./internal/caddy/...
+
+# Run integration tests (requires credentials)
+export CLOUDFLARE_API_TOKEN="your-token"
+export CLOUDFLARE_ZONE_ID="your-zone-id"
+go test -v ./internal/cloudflare/...
+```
+
+### Manual mTLS Verification
+
+To manually verify mTLS is working:
+
+```bash
+# This should FAIL with SSL error (origin is protected)
+curl -v --resolve "your.domain:443:ORIGIN_IP" https://your.domain
+
+# This should SUCCEED (via Cloudflare)
+curl -v https://your.domain
+```
+
+If the direct connection succeeds, mTLS is NOT working - fix immediately.
 
 ## Future Enhancements (v2)
 
