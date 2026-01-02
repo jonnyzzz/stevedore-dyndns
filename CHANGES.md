@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1] - 2026-01-02
+
+### Fixed
+- **WebSocket Proxy**: Fixed WebSocket upgrade not working through Caddy proxy
+  - Removed incorrect `header_up` directives for Connection/Upgrade headers
+  - Changed `versions h1` to `versions 1.1` (correct Caddy syntax)
+  - Caddy 2 automatically handles WebSocket upgrade with HTTP/1.1 transport
+
+### Added
+- **WebSocket Integration Test**: Comprehensive test verifying WebSocket proxying
+  - Tests upgrade handshake, echo messaging, and multiple consecutive messages
+  - Uses `solsson/websocat` Docker image as echo server
+  - Added `github.com/gorilla/websocket` dependency for testing
+
 ## [0.9.0] - 2026-01-02
 
 ### Added
