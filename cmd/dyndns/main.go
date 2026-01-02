@@ -263,6 +263,10 @@ func updateIPAndDNS(
 // updateSubdomainRecords creates/updates individual subdomain DNS records
 // This is required when Cloudflare proxy is enabled because Cloudflare Universal SSL
 // doesn't cover wildcard subdomains (*.domain.com)
+//
+// In proxy mode, we only create A records (IPv4) - Cloudflare automatically provides
+// IPv6 connectivity to clients via their edge network. This avoids issues where the
+// origin doesn't have IPv6 port forwarding configured.
 func updateSubdomainRecords(
 	ctx context.Context,
 	cfg *config.Config,
@@ -287,6 +291,7 @@ func updateSubdomainRecords(
 	)
 
 	// Update records for each active subdomain
+	// In proxy mode: only A records - Cloudflare handles IPv6 for clients automatically
 	for _, subdomain := range activeSubdomains {
 		fqdn := cfg.GetSubdomainFQDN(subdomain)
 
@@ -298,13 +303,10 @@ func updateSubdomainRecords(
 			}
 		}
 
-		if ipv6 != "" {
-			if err := cfClient.UpdateRecord(ctx, fqdn, "AAAA", ipv6); err != nil {
-				slog.Error("Failed to update subdomain AAAA record", "subdomain", subdomain, "fqdn", fqdn, "error", err)
-			} else {
-				slog.Info("Updated subdomain AAAA record", "subdomain", subdomain, "fqdn", fqdn)
-			}
-		}
+		// Note: We intentionally skip AAAA records for subdomains in proxy mode.
+		// Cloudflare's proxy automatically provides IPv6 connectivity to clients
+		// while communicating with origin over IPv4 only. This avoids issues where
+		// home routers don't have IPv6 port forwarding configured.
 	}
 
 	// Clean up old subdomain records that are no longer active
@@ -324,6 +326,7 @@ func updateSubdomainRecords(
 			if err := cfClient.DeleteRecord(ctx, existingFQDN, "A"); err != nil {
 				slog.Error("Failed to delete stale A record", "subdomain", existing, "error", err)
 			}
+			// Also clean up any stale AAAA records from previous configurations
 			if err := cfClient.DeleteRecord(ctx, existingFQDN, "AAAA"); err != nil {
 				slog.Error("Failed to delete stale AAAA record", "subdomain", existing, "error", err)
 			}
