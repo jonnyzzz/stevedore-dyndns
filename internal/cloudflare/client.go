@@ -13,11 +13,12 @@ import (
 
 // Client wraps the Cloudflare API client
 type Client struct {
-	api     *cloudflare.API
-	zoneID  string
-	domain  string
-	proxied bool // Cloudflare proxy mode (orange cloud)
-	ttl     int  // DNS record TTL in seconds
+	api        *cloudflare.API
+	zoneID     string
+	domain     string
+	baseDomain string // Parent domain in prefix mode
+	proxied    bool   // Cloudflare proxy mode (orange cloud)
+	ttl        int    // DNS record TTL in seconds
 
 	// Cache of record IDs to avoid lookups
 	recordCache map[string]string
@@ -35,6 +36,7 @@ func New(cfg *config.Config) (*Client, error) {
 		api:         api,
 		zoneID:      cfg.CloudflareZoneID,
 		domain:      cfg.Domain,
+		baseDomain:  cfg.GetBaseDomain(),
 		proxied:     cfg.CloudflareProxy,
 		ttl:         cfg.DNSTTL,
 		recordCache: make(map[string]string),
@@ -43,18 +45,28 @@ func New(cfg *config.Config) (*Client, error) {
 
 // validateRecordName ensures the record name is within the configured domain scope.
 // This is a safety assertion to prevent accidental modifications to records outside the domain.
+// In prefix mode, records may be subdomains of baseDomain (e.g., app-zone.example.com when domain is zone.example.com)
 func (c *Client) validateRecordName(name string) error {
-	// Normalize both to lowercase for comparison
+	// Normalize to lowercase for comparison
 	normalizedName := strings.ToLower(strings.TrimSuffix(name, "."))
 	normalizedDomain := strings.ToLower(strings.TrimSuffix(c.domain, "."))
+	normalizedBaseDomain := strings.ToLower(strings.TrimSuffix(c.baseDomain, "."))
 
-	// Record must either be the domain itself or a subdomain of it
-	if normalizedName != normalizedDomain && !strings.HasSuffix(normalizedName, "."+normalizedDomain) {
-		return fmt.Errorf("SECURITY: record name %q is outside configured domain %q - refusing to modify", name, c.domain)
+	// Check against configured domain (normal mode)
+	if normalizedName == normalizedDomain || strings.HasSuffix(normalizedName, "."+normalizedDomain) {
+		slog.Debug("Record name validation passed (domain match)", "name", name, "domain", c.domain)
+		return nil
 	}
 
-	slog.Debug("Record name validation passed", "name", name, "domain", c.domain)
-	return nil
+	// Check against base domain (prefix mode - allows app-zone.example.com when domain is zone.example.com)
+	if normalizedBaseDomain != "" && normalizedBaseDomain != normalizedDomain {
+		if normalizedName == normalizedBaseDomain || strings.HasSuffix(normalizedName, "."+normalizedBaseDomain) {
+			slog.Debug("Record name validation passed (baseDomain match)", "name", name, "baseDomain", c.baseDomain)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("SECURITY: record name %q is outside configured domain %q (baseDomain: %q) - refusing to modify", name, c.domain, c.baseDomain)
 }
 
 // UpdateRecord creates or updates a DNS record
