@@ -161,7 +161,7 @@ func TestGenerator_Generate_EmptyMappings(t *testing.T) {
 
 	// Create empty mapping manager
 	mgr := mapping.New("/nonexistent")
-	mgr.Load() // Will result in empty mappings
+	_ = mgr.Load() // Will result in empty mappings
 
 	gen := New(cfg, mgr)
 

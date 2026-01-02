@@ -484,8 +484,8 @@ func TestLoad_MappingsFilePath(t *testing.T) {
 	tmpDir := t.TempDir()
 	sharedDir := filepath.Join(tmpDir, "shared")
 	dataDir := filepath.Join(tmpDir, "data")
-	os.MkdirAll(sharedDir, 0755)
-	os.MkdirAll(dataDir, 0755)
+	_ = os.MkdirAll(sharedDir, 0755)
+	_ = os.MkdirAll(dataDir, 0755)
 
 	t.Run("explicit MAPPINGS_FILE takes priority", func(t *testing.T) {
 		clearEnv()
@@ -512,7 +512,7 @@ func TestLoad_MappingsFilePath(t *testing.T) {
 
 		// Create shared mappings file
 		sharedMappings := filepath.Join(sharedDir, "dyndns-mappings.yaml")
-		os.WriteFile(sharedMappings, []byte("mappings: []"), 0644)
+		_ = os.WriteFile(sharedMappings, []byte("mappings: []"), 0644)
 		defer os.Remove(sharedMappings)
 
 		cfg, err := Load()
@@ -533,7 +533,7 @@ func TestLoad_MappingsFilePath(t *testing.T) {
 
 		// Create data mappings file but not shared
 		dataMappings := filepath.Join(dataDir, "mappings.yaml")
-		os.WriteFile(dataMappings, []byte("mappings: []"), 0644)
+		_ = os.WriteFile(dataMappings, []byte("mappings: []"), 0644)
 		defer os.Remove(dataMappings)
 
 		cfg, err := Load()
@@ -573,7 +573,7 @@ func TestFileExists(t *testing.T) {
 	}
 
 	// Create file
-	os.WriteFile(tmpFile, []byte("test"), 0644)
+	_ = os.WriteFile(tmpFile, []byte("test"), 0644)
 
 	if !fileExists(tmpFile) {
 		t.Error("fileExists() = false for existing file")

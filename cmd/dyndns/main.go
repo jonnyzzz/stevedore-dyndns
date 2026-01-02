@@ -338,7 +338,7 @@ func runStatusServer(
 	// Health endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		_, _ = w.Write([]byte("OK"))
 	})
 
 	// Status endpoint
@@ -355,7 +355,7 @@ func runStatusServer(
 
 	go func() {
 		<-ctx.Done()
-		server.Shutdown(context.Background())
+		_ = server.Shutdown(context.Background())
 	}()
 
 	slog.Info("Starting status server", "addr", ":8081")

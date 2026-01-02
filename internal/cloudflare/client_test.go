@@ -61,7 +61,7 @@ func MockCloudflareServer(t *testing.T) *httptest.Server {
 		auth := r.Header.Get("Authorization")
 		if !strings.HasPrefix(auth, "Bearer ") {
 			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": false,
 				"errors":  []map[string]interface{}{{"message": "Unauthorized"}},
 			})
@@ -82,7 +82,7 @@ func MockCloudflareServer(t *testing.T) *httptest.Server {
 				}
 			}
 
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": true,
 				"result":  result,
 			})
@@ -92,7 +92,7 @@ func MockCloudflareServer(t *testing.T) *httptest.Server {
 		// Create DNS record
 		if strings.Contains(path, "/dns_records") && r.Method == "POST" {
 			var body map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&body)
+			_ = json.NewDecoder(r.Body).Decode(&body)
 
 			id := nextID
 			nextID++
@@ -106,7 +106,7 @@ func MockCloudflareServer(t *testing.T) *httptest.Server {
 			}
 			records[body["name"].(string)+":"+body["type"].(string)] = record
 
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": true,
 				"result":  record,
 			})
@@ -116,12 +116,12 @@ func MockCloudflareServer(t *testing.T) *httptest.Server {
 		// Update DNS record
 		if strings.Contains(path, "/dns_records/") && r.Method == "PATCH" {
 			var body map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&body)
+			_ = json.NewDecoder(r.Body).Decode(&body)
 
 			key := body["name"].(string) + ":" + body["type"].(string)
 			if record, ok := records[key]; ok {
 				record["content"] = body["content"]
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"success": true,
 					"result":  record,
 				})
@@ -129,7 +129,7 @@ func MockCloudflareServer(t *testing.T) *httptest.Server {
 			}
 
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": false,
 				"errors":  []map[string]interface{}{{"message": "Record not found"}},
 			})
@@ -138,7 +138,7 @@ func MockCloudflareServer(t *testing.T) *httptest.Server {
 
 		// Delete DNS record
 		if strings.Contains(path, "/dns_records/") && r.Method == "DELETE" {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": true,
 				"result":  map[string]interface{}{"id": "deleted"},
 			})
@@ -147,7 +147,7 @@ func MockCloudflareServer(t *testing.T) *httptest.Server {
 
 		// Zone details
 		if strings.Contains(path, "/zones/") && r.Method == "GET" && !strings.Contains(path, "dns_records") {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": true,
 				"result": map[string]interface{}{
 					"id":     "test-zone-id",
@@ -280,7 +280,7 @@ func TestClient_UpdateRecord_Errors(t *testing.T) {
 	errorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"errors":  []map[string]interface{}{{"message": "Internal error"}},
 		})

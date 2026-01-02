@@ -210,7 +210,7 @@ func TestClient_MockServer(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/services", func(w http.ResponseWriter, r *http.Request) {
 		// Check auth
@@ -244,11 +244,11 @@ func TestClient_MockServer(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(services)
+		_ = json.NewEncoder(w).Encode(services)
 	})
 
 	server := &http.Server{Handler: mux}
-	go server.Serve(listener)
+	go func() { _ = server.Serve(listener) }()
 	defer server.Close()
 
 	// Wait for server to start

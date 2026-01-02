@@ -17,7 +17,6 @@ import (
 type Generator struct {
 	cfg        *config.Config
 	mappingMgr *mapping.Manager
-	tmpl       *template.Template
 
 	// Discovery services (from stevedore socket API)
 	discoveredServices []discovery.Service

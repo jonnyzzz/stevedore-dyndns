@@ -78,7 +78,7 @@ func TestDetector_GetLastKnown(t *testing.T) {
 	}
 
 	// After detect, should return the detected IPs
-	detector.Detect(context.Background())
+	_, _, _ = detector.Detect(context.Background())
 
 	ipv4, ipv6, _ = detector.GetLastKnown()
 	if ipv4 != "1.2.3.4" {
@@ -317,7 +317,7 @@ func TestDetector_FritzboxGetExternalIP_MockServer(t *testing.T) {
   </s:Body>
 </s:Envelope>`
 			w.Header().Set("Content-Type", "text/xml")
-			w.Write([]byte(response))
+			_, _ = w.Write([]byte(response))
 		} else {
 			w.WriteHeader(http.StatusBadRequest)
 		}
