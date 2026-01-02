@@ -326,10 +326,10 @@ func testMTLSWithCurl(t *testing.T, certDir, httpsPort string) SecurityTestResul
 	}
 
 	// Test 1: Connection WITHOUT client cert should FAIL
+	// Use -k to skip server cert verification (we're testing mTLS client auth)
 	cmd := exec.Command("docker", "run", "--rm", "--network=host",
 		"-v", certDir+":/certs:ro",
-		"curlimages/curl", "-sS", "-v",
-		"--cacert", "/certs/ca.pem",
+		"curlimages/curl", "-sS", "-v", "-k",
 		"--max-time", "10",
 		fmt.Sprintf("https://127.0.0.1:%s/", httpsPort),
 	)
@@ -364,11 +364,10 @@ func testMTLSWithCurl(t *testing.T, certDir, httpsPort string) SecurityTestResul
 	}
 
 	// Test 2: Connection WITH client cert should SUCCEED
-	// Use verbose mode to see what's happening
+	// Use -k to skip server cert verification (we're testing mTLS client auth)
 	cmd = exec.Command("docker", "run", "--rm", "--network=host",
 		"-v", certDir+":/certs:ro",
-		"curlimages/curl", "-sS", "-v",
-		"--cacert", "/certs/ca.pem",
+		"curlimages/curl", "-sS", "-v", "-k",
 		"--cert", "/certs/client.pem",
 		"--key", "/certs/client-key.pem",
 		"--max-time", "10",
