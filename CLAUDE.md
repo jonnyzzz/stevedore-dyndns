@@ -530,10 +530,89 @@ curl -v https://your.domain
 
 If the direct connection succeeds, mTLS is NOT working - fix immediately.
 
+## Automatic Service Discovery
+
+Services can be automatically discovered and routed without manual configuration. Stevedore provides two methods:
+
+### Method 1: Docker Labels (Recommended)
+
+Add labels to your `docker-compose.yaml`:
+
+```yaml
+services:
+  web:
+    image: myapp:latest
+    ports:
+      - "8080:8080"
+    labels:
+      - "stevedore.ingress.enabled=true"
+      - "stevedore.ingress.subdomain=myapp"
+      - "stevedore.ingress.port=8080"
+      - "stevedore.ingress.websocket=false"
+      - "stevedore.ingress.healthcheck=/health"
+```
+
+| Label | Required | Description |
+|-------|----------|-------------|
+| `stevedore.ingress.enabled` | Yes | Must be `true` to enable routing |
+| `stevedore.ingress.subdomain` | Yes | Subdomain for this service |
+| `stevedore.ingress.port` | Yes | Container port to route to |
+| `stevedore.ingress.websocket` | No | Enable WebSocket support (default: `false`) |
+| `stevedore.ingress.healthcheck` | No | Health check path (default: `/health`) |
+
+### Method 2: Stevedore Parameters
+
+For deployments where you cannot modify the docker-compose file (public images, upstream repos), use stevedore parameters:
+
+```bash
+# Configure ingress for service "web" in deployment "nginx"
+stevedore param set nginx STEVEDORE_INGRESS_WEB_ENABLED true
+stevedore param set nginx STEVEDORE_INGRESS_WEB_SUBDOMAIN mysite
+stevedore param set nginx STEVEDORE_INGRESS_WEB_PORT 80
+stevedore param set nginx STEVEDORE_INGRESS_WEB_HEALTHCHECK /
+
+# For service names with dashes (e.g., "my-api-server"):
+# Convert to uppercase and replace dashes with underscores
+stevedore param set app STEVEDORE_INGRESS_MY_API_SERVER_ENABLED true
+stevedore param set app STEVEDORE_INGRESS_MY_API_SERVER_SUBDOMAIN api
+stevedore param set app STEVEDORE_INGRESS_MY_API_SERVER_PORT 3000
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `STEVEDORE_INGRESS_<SERVICE>_ENABLED` | Yes | Must be `true` to enable routing |
+| `STEVEDORE_INGRESS_<SERVICE>_SUBDOMAIN` | Yes | Subdomain for this service |
+| `STEVEDORE_INGRESS_<SERVICE>_PORT` | Yes | Container port to route to |
+| `STEVEDORE_INGRESS_<SERVICE>_WEBSOCKET` | No | Enable WebSocket support |
+| `STEVEDORE_INGRESS_<SERVICE>_HEALTHCHECK` | No | Health check path |
+
+**Service name convention:** Uppercase, dashes converted to underscores (e.g., `my-web-app` → `MY_WEB_APP`)
+
+### Priority Rules
+
+When both Docker labels and parameters exist for a service:
+1. **Docker labels take precedence** - explicit labels in docker-compose override parameters
+2. **Parameters as fallback** - applied when container has no ingress labels
+
+### Example: Routing nginx (Public Image)
+
+```bash
+# Deploy nginx (no labels in official image)
+stevedore repo add nginx https://github.com/myorg/nginx-deployment.git
+stevedore deploy up nginx
+
+# Configure ingress via parameters
+stevedore param set nginx STEVEDORE_INGRESS_NGINX_ENABLED true
+stevedore param set nginx STEVEDORE_INGRESS_NGINX_SUBDOMAIN www
+stevedore param set nginx STEVEDORE_INGRESS_NGINX_PORT 80
+stevedore param set nginx STEVEDORE_INGRESS_NGINX_HEALTHCHECK /
+
+# Service is now accessible at https://www.home.example.com (or www-home.example.com in prefix mode)
+```
+
 ## Future Enhancements (v2)
 
 - [ ] Web UI for configuration
-- [ ] Automatic service discovery from Docker labels
 - [ ] Rate limiting per subdomain
 - [ ] Authentication middleware (OAuth2, Basic Auth)
 - [ ] Metrics and monitoring (Prometheus)
