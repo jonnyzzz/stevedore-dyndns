@@ -114,10 +114,7 @@ func runControlLoop(
 	mappingMgr *mapping.Manager,
 	discoveryClient *discovery.Client,
 ) {
-	// Initial IP detection and DNS update
-	updateIPAndDNS(ctx, cfg, detector, cfClient, caddyGen)
-
-	// Load initial services/mappings
+	// Load initial services/mappings BEFORE IP update (so subdomains are known)
 	if discoveryClient != nil {
 		// Discovery mode: fetch services from stevedore socket
 		services, err := discoveryClient.GetIngressServices(ctx)
@@ -138,6 +135,9 @@ func runControlLoop(
 	if err := caddyGen.Generate(); err != nil {
 		slog.Error("Failed to generate Caddy config", "error", err)
 	}
+
+	// Initial IP detection and DNS update (after discovery, so subdomains are known)
+	updateIPAndDNS(ctx, cfg, detector, cfClient, caddyGen)
 
 	// Start service discovery polling or file watching
 	if discoveryClient != nil {
