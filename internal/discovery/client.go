@@ -108,16 +108,53 @@ func (c *Client) GetIngressServices(ctx context.Context) ([]Service, error) {
 	return c.parseServices(svcResponses), nil
 }
 
+// EventType represents the type of change event from stevedore.
+type EventType string
+
+const (
+	EventDeploymentCreated       EventType = "deployment.created"
+	EventDeploymentUpdated       EventType = "deployment.updated"
+	EventDeploymentRemoved       EventType = "deployment.removed"
+	EventDeploymentStatusChanged EventType = "deployment.status_changed"
+	EventParamsChanged           EventType = "params.changed"
+)
+
+// Event represents a change event from stevedore.
+type Event struct {
+	Type       EventType         `json:"type"`
+	Deployment string            `json:"deployment,omitempty"`
+	Timestamp  time.Time         `json:"timestamp"`
+	Details    map[string]string `json:"details,omitempty"`
+}
+
 // pollResponse matches the stevedore poll API response.
 type pollResponse struct {
 	Changed   bool              `json:"changed"`
 	Timestamp int64             `json:"timestamp"`
 	Services  []serviceResponse `json:"services,omitempty"`
+	Events    []Event           `json:"events,omitempty"`
 }
 
-// Poll long-polls for service changes. Returns the new services and timestamp.
-// If no changes, returns nil services with the new timestamp.
+// PollResult contains the result of a poll operation.
+type PollResult struct {
+	Services  []Service
+	Events    []Event
+	Timestamp time.Time
+	Changed   bool
+}
+
+// Poll long-polls for service changes. Returns services, events, and timestamp.
+// If no changes, returns Changed=false with the new timestamp.
 func (c *Client) Poll(ctx context.Context, since time.Time) ([]Service, time.Time, error) {
+	result, err := c.PollWithEvents(ctx, since)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return result.Services, result.Timestamp, nil
+}
+
+// PollWithEvents long-polls for service changes and returns full event details.
+func (c *Client) PollWithEvents(ctx context.Context, since time.Time) (*PollResult, error) {
 	url := "http://stevedore/poll"
 	if !since.IsZero() {
 		url += "?since=" + strconv.FormatInt(since.Unix(), 10)
@@ -125,34 +162,50 @@ func (c *Client) Poll(ctx context.Context, since time.Time) ([]Service, time.Tim
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("failed to poll: %w", err)
+		return nil, fmt.Errorf("failed to poll: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, time.Time{}, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var pollResp pollResponse
 	if err := json.NewDecoder(resp.Body).Decode(&pollResp); err != nil {
-		return nil, time.Time{}, fmt.Errorf("failed to decode response: %w", err)
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	newTime := time.Unix(pollResp.Timestamp, 0)
-
-	if !pollResp.Changed {
-		return nil, newTime, nil
+	result := &PollResult{
+		Timestamp: time.Unix(pollResp.Timestamp, 0),
+		Changed:   pollResp.Changed,
+		Events:    pollResp.Events,
 	}
 
-	return c.parseServices(pollResp.Services), newTime, nil
+	if pollResp.Changed {
+		// Log events for observability
+		for _, event := range pollResp.Events {
+			slog.Debug("Received event from stevedore",
+				"type", event.Type,
+				"deployment", event.Deployment,
+				"details", event.Details,
+			)
+		}
+
+		// If services included in response, use them; otherwise fetch fresh
+		if len(pollResp.Services) > 0 {
+			result.Services = c.parseServices(pollResp.Services)
+		}
+	}
+
+	return result, nil
 }
 
 // parseServices converts API responses to Service structs.
