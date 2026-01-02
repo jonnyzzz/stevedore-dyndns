@@ -50,11 +50,10 @@
     handle @{{.Subdomain}} {
         reverse_proxy {{.Target}} {
             {{if .Options.Websocket}}
-            # WebSocket support
-            header_up Connection {>Connection}
-            header_up Upgrade {>Upgrade}
+            # WebSocket support - force HTTP/1.1 for proper upgrade handling
+            # Note: Caddy automatically handles WebSocket upgrade headers with HTTP/1.1
             transport http {
-                versions h1
+                versions 1.1
             }
             {{end}}
             {{if not .Options.BufferRequests}}

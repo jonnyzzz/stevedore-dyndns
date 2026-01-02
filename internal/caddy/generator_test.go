@@ -267,7 +267,7 @@ func TestTemplateWebsocketForcesHTTP1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateContent failed: %v", err)
 	}
-	if !strings.Contains(content, "transport http") || !strings.Contains(content, "versions h1") {
+	if !strings.Contains(content, "transport http") || !strings.Contains(content, "versions 1.1") {
 		t.Error("Expected websocket transport to force HTTP/1.1")
 	}
 
