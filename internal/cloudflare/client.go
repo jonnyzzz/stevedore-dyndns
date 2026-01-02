@@ -279,9 +279,11 @@ func (c *Client) ConfigureForProxyMode(ctx context.Context) error {
 	return nil
 }
 
-// GetManagedSubdomainRecords returns all subdomain DNS records managed by this service.
-// It looks for A and AAAA records that are subdomains of the configured domain.
-func (c *Client) GetManagedSubdomainRecords(ctx context.Context) ([]string, error) {
+// GetManagedRecordFQDNs returns all DNS record FQDNs managed by this service.
+// It looks for A and AAAA records that belong to this deployment based on:
+// - Normal mode: subdomains of configured domain (e.g., app.zone.example.com)
+// - Prefix mode: records matching pattern {subdomain}-{zone}.{parent} (e.g., app-zone.example.com)
+func (c *Client) GetManagedRecordFQDNs(ctx context.Context) ([]string, error) {
 	rc := cloudflare.ZoneIdentifier(c.zoneID)
 
 	// Get all A records
@@ -300,31 +302,101 @@ func (c *Client) GetManagedSubdomainRecords(ctx context.Context) ([]string, erro
 		return nil, fmt.Errorf("failed to list AAAA records: %w", err)
 	}
 
-	// Collect subdomain names (not the domain itself, not wildcards)
+	// Collect FQDNs that belong to this deployment
 	seen := make(map[string]bool)
-	var subdomains []string
+	var fqdns []string
 
 	for _, r := range append(aRecords, aaaaRecords...) {
-		name := strings.TrimSuffix(r.Name, ".")
-		domain := strings.TrimSuffix(c.domain, ".")
+		name := strings.ToLower(strings.TrimSuffix(r.Name, "."))
 
-		// Skip the domain itself
-		if strings.EqualFold(name, domain) {
-			continue
-		}
-
-		// Skip wildcard records
+		// Skip wildcards
 		if strings.HasPrefix(name, "*.") {
 			continue
 		}
 
-		// Only include subdomains of our domain
-		if !strings.HasSuffix(strings.ToLower(name), "."+strings.ToLower(domain)) {
-			continue
+		if c.IsManagedRecord(name) && !seen[name] {
+			seen[name] = true
+			fqdns = append(fqdns, name)
+		}
+	}
+
+	return fqdns, nil
+}
+
+// IsManagedRecord checks if a DNS record FQDN belongs to this dyndns deployment.
+// In normal mode: checks if record is a subdomain of c.domain (e.g., app.zone.example.com)
+// In prefix mode: checks if record matches pattern {x}-{zone}.{parent} where domain is zone.parent
+func (c *Client) IsManagedRecord(fqdn string) bool {
+	fqdn = strings.ToLower(strings.TrimSuffix(fqdn, "."))
+	domain := strings.ToLower(strings.TrimSuffix(c.domain, "."))
+	baseDomain := strings.ToLower(strings.TrimSuffix(c.baseDomain, "."))
+
+	// Skip the domain itself and base domain
+	if fqdn == domain || fqdn == baseDomain {
+		return false
+	}
+
+	// Normal mode: record is subdomain of domain (e.g., app.zone.example.com when domain is zone.example.com)
+	if strings.HasSuffix(fqdn, "."+domain) {
+		return true
+	}
+
+	// Prefix mode: record matches pattern {subdomain}-{zone}.{parent}
+	// e.g., app-home.jonnyzzz.com when domain is home.jonnyzzz.com
+	if baseDomain != "" && baseDomain != domain {
+		// Extract zone part from domain (first part before the dot)
+		parts := strings.SplitN(domain, ".", 2)
+		if len(parts) >= 1 {
+			zonePart := parts[0] // e.g., "home" from "home.jonnyzzz.com"
+			// Check if record ends with -{zone}.{baseDomain}
+			suffix := "-" + zonePart + "." + baseDomain // e.g., "-home.jonnyzzz.com"
+			if strings.HasSuffix(fqdn, suffix) {
+				// Ensure there's a subdomain part before the suffix
+				prefix := strings.TrimSuffix(fqdn, suffix)
+				if prefix != "" && !strings.Contains(prefix, ".") {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// GetManagedSubdomainRecords returns all subdomain DNS records managed by this service.
+// Deprecated: Use GetManagedRecordFQDNs for better prefix mode support.
+// This method is kept for backwards compatibility.
+func (c *Client) GetManagedSubdomainRecords(ctx context.Context) ([]string, error) {
+	fqdns, err := c.GetManagedRecordFQDNs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract subdomain names from FQDNs
+	domain := strings.ToLower(strings.TrimSuffix(c.domain, "."))
+	baseDomain := strings.ToLower(strings.TrimSuffix(c.baseDomain, "."))
+
+	var subdomains []string
+	seen := make(map[string]bool)
+
+	for _, fqdn := range fqdns {
+		var subdomain string
+
+		// Try normal mode extraction
+		if strings.HasSuffix(fqdn, "."+domain) {
+			subdomain = strings.TrimSuffix(fqdn, "."+domain)
+		} else if baseDomain != "" && baseDomain != domain {
+			// Try prefix mode extraction: app-home.jonnyzzz.com -> app
+			parts := strings.SplitN(domain, ".", 2)
+			if len(parts) >= 1 {
+				zonePart := parts[0]
+				suffix := "-" + zonePart + "." + baseDomain
+				if strings.HasSuffix(fqdn, suffix) {
+					subdomain = strings.TrimSuffix(fqdn, suffix)
+				}
+			}
 		}
 
-		// Extract just the subdomain part
-		subdomain := strings.TrimSuffix(strings.ToLower(name), "."+strings.ToLower(domain))
 		if subdomain != "" && !seen[subdomain] {
 			seen[subdomain] = true
 			subdomains = append(subdomains, subdomain)

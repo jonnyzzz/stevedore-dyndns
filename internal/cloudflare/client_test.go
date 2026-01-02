@@ -725,3 +725,204 @@ func TestAuthenticatedOriginPullValues(t *testing.T) {
 		})
 	}
 }
+
+// TestIsManagedRecord tests the record ownership detection in both normal and prefix modes
+// This is critical for terraform-like DNS reconciliation (detecting stale records to delete)
+func TestIsManagedRecord(t *testing.T) {
+	testCases := []struct {
+		name           string
+		domain         string
+		baseDomain     string
+		managedFQDNs   []string
+		unmanagedFQDNs []string
+	}{
+		{
+			name:       "normal mode - domain home.jonnyzzz.com",
+			domain:     "home.jonnyzzz.com",
+			baseDomain: "home.jonnyzzz.com", // same as domain in normal mode
+			managedFQDNs: []string{
+				"app.home.jonnyzzz.com",
+				"test.home.jonnyzzz.com",
+				"roomtone.home.jonnyzzz.com",
+				"api.v1.home.jonnyzzz.com", // nested subdomain
+			},
+			unmanagedFQDNs: []string{
+				"home.jonnyzzz.com",       // the domain itself
+				"jonnyzzz.com",            // parent domain
+				"other.jonnyzzz.com",      // sibling subdomain
+				"app-home.jonnyzzz.com",   // prefix-style but we're in normal mode
+				"evil.com",                // completely different
+				"fakehome.jonnyzzz.com",   // prefix attack
+			},
+		},
+		{
+			name:       "prefix mode - domain home.jonnyzzz.com, baseDomain jonnyzzz.com",
+			domain:     "home.jonnyzzz.com",
+			baseDomain: "jonnyzzz.com",
+			managedFQDNs: []string{
+				// Normal mode records (subdomains of domain)
+				"app.home.jonnyzzz.com",
+				"test.home.jonnyzzz.com",
+				// Prefix mode records (pattern: {subdomain}-{zone}.{baseDomain})
+				"app-home.jonnyzzz.com",
+				"test-home.jonnyzzz.com",
+				"roomtone-home.jonnyzzz.com",
+				"api-home.jonnyzzz.com",
+			},
+			unmanagedFQDNs: []string{
+				"home.jonnyzzz.com",       // the domain itself
+				"jonnyzzz.com",            // baseDomain itself
+				"other.jonnyzzz.com",      // different subdomain of baseDomain
+				"app-work.jonnyzzz.com",   // different zone
+				"app.jonnyzzz.com",        // not our pattern
+				"evil.com",                // completely different
+			},
+		},
+		{
+			name:       "prefix mode - zone.example.com",
+			domain:     "zone.example.com",
+			baseDomain: "example.com",
+			managedFQDNs: []string{
+				"app.zone.example.com",
+				"app-zone.example.com",
+				"test-zone.example.com",
+			},
+			unmanagedFQDNs: []string{
+				"zone.example.com",
+				"example.com",
+				"app.example.com",
+				"app-other.example.com",
+			},
+		},
+		{
+			name:       "same domain and baseDomain",
+			domain:     "example.com",
+			baseDomain: "example.com",
+			managedFQDNs: []string{
+				"app.example.com",
+				"test.example.com",
+				"sub.domain.example.com",
+			},
+			unmanagedFQDNs: []string{
+				"example.com",
+				"other.org",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{
+				CloudflareAPIToken: "test-token",
+				CloudflareZoneID:   "test-zone-id",
+				Domain:             tc.domain,
+				SubdomainPrefix:    tc.baseDomain != tc.domain,
+			}
+
+			client, err := New(cfg)
+			if err != nil {
+				t.Fatalf("New() unexpected error: %v", err)
+			}
+			// Override baseDomain for testing
+			client.baseDomain = tc.baseDomain
+
+			// Test managed FQDNs (should return true)
+			for _, fqdn := range tc.managedFQDNs {
+				if !client.IsManagedRecord(fqdn) {
+					t.Errorf("IsManagedRecord(%q) = false, want true (domain=%q, baseDomain=%q)",
+						fqdn, tc.domain, tc.baseDomain)
+				}
+			}
+
+			// Test unmanaged FQDNs (should return false)
+			for _, fqdn := range tc.unmanagedFQDNs {
+				if client.IsManagedRecord(fqdn) {
+					t.Errorf("IsManagedRecord(%q) = true, want false (domain=%q, baseDomain=%q)",
+						fqdn, tc.domain, tc.baseDomain)
+				}
+			}
+		})
+	}
+}
+
+// TestIsManagedRecord_CaseInsensitive tests case-insensitive matching
+func TestIsManagedRecord_CaseInsensitive(t *testing.T) {
+	cfg := &config.Config{
+		CloudflareAPIToken: "test-token",
+		CloudflareZoneID:   "test-zone-id",
+		Domain:             "home.jonnyzzz.com",
+		SubdomainPrefix:    true,
+	}
+
+	client, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+	client.baseDomain = "jonnyzzz.com"
+
+	// All these should match
+	caseMixes := []string{
+		"app-home.jonnyzzz.com",
+		"APP-HOME.JONNYZZZ.COM",
+		"App-Home.Jonnyzzz.Com",
+		"APP-home.JONNYZZZ.com",
+	}
+
+	for _, fqdn := range caseMixes {
+		if !client.IsManagedRecord(fqdn) {
+			t.Errorf("IsManagedRecord(%q) should be true (case-insensitive)", fqdn)
+		}
+	}
+}
+
+// TestDNSReconciliation_Integration tests the full reconciliation logic
+// This simulates the terraform-like behavior: compare existing vs desired records
+func TestDNSReconciliation_Integration(t *testing.T) {
+	cfg := &config.Config{
+		CloudflareAPIToken: "test-token",
+		CloudflareZoneID:   "test-zone-id",
+		Domain:             "home.jonnyzzz.com",
+		SubdomainPrefix:    true,
+	}
+
+	client, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+	client.baseDomain = "jonnyzzz.com"
+
+	// Simulate existing records in Cloudflare (would come from GetManagedRecordFQDNs)
+	existingFQDNs := []string{
+		"roomtone-home.jonnyzzz.com",
+		"dyndns-home.jonnyzzz.com",
+		"test-home.jonnyzzz.com", // This one should be deleted (stale)
+	}
+
+	// Simulate active records (from GetActiveSubdomains + GetSubdomainFQDN)
+	activeFQDNs := map[string]bool{
+		"roomtone-home.jonnyzzz.com": true,
+		"dyndns-home.jonnyzzz.com":   true,
+		// test-home is NOT in active list - should be deleted
+	}
+
+	// Find stale records (exist in CF but not in active list)
+	var staleRecords []string
+	for _, existing := range existingFQDNs {
+		normalized := strings.ToLower(existing)
+		if !activeFQDNs[normalized] {
+			staleRecords = append(staleRecords, existing)
+		}
+	}
+
+	// Verify we found the stale record
+	if len(staleRecords) != 1 || staleRecords[0] != "test-home.jonnyzzz.com" {
+		t.Errorf("Expected stale records [test-home.jonnyzzz.com], got %v", staleRecords)
+	}
+
+	// Verify stale record is managed (would be deleted)
+	for _, stale := range staleRecords {
+		if !client.IsManagedRecord(stale) {
+			t.Errorf("Stale record %q should be managed", stale)
+		}
+	}
+}
