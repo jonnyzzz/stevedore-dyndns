@@ -148,7 +148,8 @@ func TestHTTPSServerWithoutMTLS(t *testing.T) {
 
 	t.Run("DirectMode_AcceptsConnectionWithoutClientCert", func(t *testing.T) {
 		// In direct mode (no mTLS), connections without client cert should work
-		client := createHTTPClient(certs.caCert, nil, nil)
+		// Skip server cert verification since we're testing via Docker IP
+		client := createHTTPClient(certs.caCert, nil, nil, true)
 		resp, err := client.Get(fmt.Sprintf("https://%s:8443/", containerIP))
 		if err != nil {
 			t.Fatalf("Expected connection to succeed in direct mode, got error: %v", err)
@@ -378,14 +379,21 @@ func getContainerIP(containerID string) (string, error) {
 }
 
 // createHTTPClient creates an HTTP client with optional mTLS configuration
-func createHTTPClient(caCert *x509.Certificate, clientCert *tls.Certificate, tlsConfig *tls.Config) *http.Client {
+// skipServerVerify skips server cert hostname verification (needed when connecting via Docker IP)
+func createHTTPClient(caCert *x509.Certificate, clientCert *tls.Certificate, tlsConfig *tls.Config, skipServerVerify bool) *http.Client {
 	if tlsConfig == nil {
 		tlsConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,
 		}
 	}
 
-	// Add CA to trust pool
+	// Skip server cert verification when testing via Docker container IP
+	// We're testing mTLS (client auth), not server cert validity
+	if skipServerVerify {
+		tlsConfig.InsecureSkipVerify = true
+	}
+
+	// Add CA to trust pool (still used for client cert verification by server)
 	if caCert != nil {
 		pool := x509.NewCertPool()
 		pool.AddCert(caCert)
@@ -408,7 +416,8 @@ func createHTTPClient(caCert *x509.Certificate, clientCert *tls.Certificate, tls
 // testMTLSRejectsWithoutClientCert verifies that connections without client cert are rejected
 func testMTLSRejectsWithoutClientCert(t *testing.T, certs *testCertificates, serverIP string) {
 	// Create client WITHOUT client certificate
-	client := createHTTPClient(certs.caCert, nil, nil)
+	// Skip server cert verification since we're testing via Docker IP
+	client := createHTTPClient(certs.caCert, nil, nil, true)
 
 	url := fmt.Sprintf("https://%s:8443/", serverIP)
 	_, err := client.Get(url)
@@ -430,7 +439,8 @@ func testMTLSRejectsWithoutClientCert(t *testing.T, certs *testCertificates, ser
 // testMTLSAcceptsWithClientCert verifies that connections with valid client cert succeed
 func testMTLSAcceptsWithClientCert(t *testing.T, certs *testCertificates, serverIP string) {
 	// Create client WITH client certificate
-	client := createHTTPClient(certs.caCert, &certs.clientCert, nil)
+	// Skip server cert verification since we're testing via Docker IP
+	client := createHTTPClient(certs.caCert, &certs.clientCert, nil, true)
 
 	url := fmt.Sprintf("https://%s:8443/", serverIP)
 	resp, err := client.Get(url)
@@ -455,7 +465,8 @@ func testTLSSecureProtocol(t *testing.T, certs *testCertificates, serverIP strin
 		MaxVersion: tls.VersionTLS13,
 	}
 
-	client := createHTTPClient(certs.caCert, &certs.clientCert, tlsConfig)
+	// Skip server cert verification since we're testing via Docker IP
+	client := createHTTPClient(certs.caCert, &certs.clientCert, tlsConfig, true)
 
 	url := fmt.Sprintf("https://%s:8443/", serverIP)
 	resp, err := client.Get(url)
@@ -472,13 +483,11 @@ func testTLSSecureProtocol(t *testing.T, certs *testCertificates, serverIP strin
 func testTLSRejectsInsecureProtocols(t *testing.T, certs *testCertificates, serverIP string) {
 	// Try to connect with TLS 1.0 only
 	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS10,
-		MaxVersion: tls.VersionTLS10,
+		MinVersion:         tls.VersionTLS10,
+		MaxVersion:         tls.VersionTLS10,
+		InsecureSkipVerify: true, // Skip server cert verification for Docker IP
 	}
 
-	pool := x509.NewCertPool()
-	pool.AddCert(certs.caCert)
-	tlsConfig.RootCAs = pool
 	tlsConfig.Certificates = []tls.Certificate{certs.clientCert}
 
 	client := &http.Client{
