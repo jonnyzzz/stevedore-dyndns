@@ -249,9 +249,11 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
-// GetTarget returns the target address for proxying (container:port).
+// GetTarget returns the target address for proxying.
+// Uses localhost since dyndns runs with host networking and can't resolve container names.
+// Services must expose their ports to the host (port mapping in docker-compose).
 func (s *Service) GetTarget() string {
-	return fmt.Sprintf("%s:%d", s.Container, s.Port)
+	return fmt.Sprintf("localhost:%d", s.Port)
 }
 
 // GetHealthPath returns the health check path, defaulting to /health.

@@ -164,7 +164,8 @@ func TestService_GetTarget(t *testing.T) {
 	}
 
 	got := svc.GetTarget()
-	want := "stevedore-myapp-web-1:3000"
+	// Uses localhost since dyndns runs with host networking
+	want := "localhost:3000"
 
 	if got != want {
 		t.Errorf("GetTarget() = %q, want %q", got, want)
