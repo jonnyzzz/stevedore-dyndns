@@ -164,8 +164,8 @@ func TestService_GetTarget(t *testing.T) {
 	}
 
 	got := svc.GetTarget()
-	// Uses localhost since dyndns runs with host networking
-	want := "localhost:3000"
+	// Uses explicit IPv4 loopback to avoid ::1 resolution issues
+	want := "127.0.0.1:3000"
 
 	if got != want {
 		t.Errorf("GetTarget() = %q, want %q", got, want)
@@ -350,6 +350,105 @@ func TestClient_SocketNotExists(t *testing.T) {
 	_, err := client.GetIngressServices(ctx)
 	if err == nil {
 		t.Error("GetIngressServices() with nonexistent socket should return error")
+	}
+}
+
+// TestClient_PollWithoutServices tests that Poll fetches services when /poll returns
+// changed=true without a services payload (issue #4).
+func TestClient_PollWithoutServices(t *testing.T) {
+	// Create temp socket
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "query.sock")
+
+	// Create mock server
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("Failed to create socket: %v", err)
+	}
+	defer listener.Close()
+
+	// Track whether /services was called after /poll
+	servicesCalledAfterPoll := false
+	pollCalled := false
+
+	// Mock server handler
+	mux := http.NewServeMux()
+	mux.HandleFunc("/poll", func(w http.ResponseWriter, r *http.Request) {
+		pollCalled = true
+		// Return changed=true WITHOUT services payload
+		pollResp := struct {
+			Changed   bool  `json:"changed"`
+			Timestamp int64 `json:"timestamp"`
+		}{
+			Changed:   true,
+			Timestamp: time.Now().Unix(),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(pollResp)
+	})
+	mux.HandleFunc("/services", func(w http.ResponseWriter, r *http.Request) {
+		if pollCalled {
+			servicesCalledAfterPoll = true
+		}
+		// Check auth
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer test-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		services := []serviceResponse{
+			{
+				Deployment:    "myapp",
+				Service:       "web",
+				ContainerID:   "abc123",
+				ContainerName: "stevedore-myapp-web-1",
+				Running:       true,
+				Ingress: &ingressConfig{
+					Enabled:   true,
+					Subdomain: "myapp",
+					Port:      3000,
+				},
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(services)
+	})
+
+	server := &http.Server{Handler: mux}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	// Wait for server to start
+	time.Sleep(50 * time.Millisecond)
+
+	// Create client
+	client := New(Config{
+		SocketPath: socketPath,
+		Token:      "test-token",
+	})
+
+	// Call Poll - should get changed=true without services, then fetch services
+	result, err := client.PollWithEvents(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatalf("PollWithEvents() unexpected error: %v", err)
+	}
+
+	if !result.Changed {
+		t.Error("PollWithEvents() Changed should be true")
+	}
+
+	if !servicesCalledAfterPoll {
+		t.Error("PollWithEvents() should call /services when poll returns changed without services")
+	}
+
+	if len(result.Services) != 1 {
+		t.Errorf("PollWithEvents() returned %d services, want 1", len(result.Services))
+	}
+
+	if result.Services[0].Subdomain != "myapp" {
+		t.Errorf("Services[0].Subdomain = %q, want %q", result.Services[0].Subdomain, "myapp")
 	}
 }
 

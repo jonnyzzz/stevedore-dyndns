@@ -391,7 +391,7 @@ func runStatusServer(
 	})
 
 	server := &http.Server{
-		Addr:    ":8081",
+		Addr:    "127.0.0.1:8081",
 		Handler: mux,
 	}
 
@@ -400,7 +400,7 @@ func runStatusServer(
 		_ = server.Shutdown(context.Background())
 	}()
 
-	slog.Info("Starting status server", "addr", ":8081")
+	slog.Info("Starting status server", "addr", "127.0.0.1:8081")
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		slog.Error("Status server error", "error", err)
 	}

@@ -79,15 +79,15 @@
     }
 }
 
-# Health check endpoint (internal only)
-:8080 {
+# Health check endpoint (internal only, bound to localhost for security)
+127.0.0.1:8080 {
     handle /health {
         respond "OK" 200
     }
 
     handle /status {
         # Returns JSON status (handled by Go service)
-        reverse_proxy localhost:8081
+        reverse_proxy 127.0.0.1:8081
     }
 
     handle {

@@ -202,6 +202,14 @@ func (c *Client) PollWithEvents(ctx context.Context, since time.Time) (*PollResu
 		// If services included in response, use them; otherwise fetch fresh
 		if len(pollResp.Services) > 0 {
 			result.Services = c.parseServices(pollResp.Services)
+		} else {
+			// Poll returned changed=true but no services payload - fetch services explicitly
+			slog.Debug("Poll returned changed without services, fetching fresh service list")
+			services, err := c.GetIngressServices(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to fetch services after poll change: %w", err)
+			}
+			result.Services = services
 		}
 	}
 
@@ -303,10 +311,12 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 }
 
 // GetTarget returns the target address for proxying.
-// Uses localhost since dyndns runs with host networking and can't resolve container names.
+// Uses 127.0.0.1 (IPv4 loopback) since dyndns runs with host networking and can't resolve
+// container names. Using explicit IPv4 avoids issues where "localhost" resolves to ::1 (IPv6)
+// but the service only binds to IPv4.
 // Services must expose their ports to the host (port mapping in docker-compose).
 func (s *Service) GetTarget() string {
-	return fmt.Sprintf("localhost:%d", s.Port)
+	return fmt.Sprintf("127.0.0.1:%d", s.Port)
 }
 
 // GetHealthPath returns the health check path, defaulting to /health.

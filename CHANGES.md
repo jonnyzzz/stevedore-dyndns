@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.2] - 2026-01-06
+
+### Fixed
+- **IPv4 Loopback**: Use explicit `127.0.0.1` instead of `localhost` for upstream targets
+  - Prevents failures when `localhost` resolves to `::1` (IPv6) but service only binds IPv4
+  - Resolves #5
+- **Discovery Poll Refresh**: Fetch services when `/poll` returns `changed=true` without services payload
+  - Previously, service changes weren't detected if stevedore omitted the services list
+  - Now explicitly calls `/services?ingress=true` when changes are detected
+  - Resolves #4
+
+### Security
+- **Bind Health Ports to Localhost**: Health check endpoints now bind to `127.0.0.1` only
+  - Ports 8080 (Caddy health) and 8081 (Go status) no longer exposed to external interfaces
+  - Internal services can still access via localhost
+
 ## [0.9.1] - 2026-01-02
 
 ### Fixed
