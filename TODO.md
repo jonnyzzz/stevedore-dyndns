@@ -46,3 +46,21 @@ access logging is enabled and ensure WebSocket upgrades are logged.
 We need Caddy access logs in `docker logs` output to trace traffic without
 shelling into the container. Add a test, implement log streaming, and verify
 that access logs include `/ws` upgrades.
+
+---
+
+## Stevedore Follow-ups
+
+### [ ] Stevedore deploy should be idempotent/attachable
+**GitHub**: https://github.com/jonnyzzz/stevedore/issues/12
+
+stevedore `deploy sync`/`deploy up` should attach to an in-flight operation if re-run
+and avoid launching duplicate concurrent jobs. The sequence
+`stevedore deploy sync dyndns && stevedore deploy up dyndns && stevedore status dyndns`
+should be resumable if interrupted.
+
+### [ ] Stevedore CLI guidance for AI-friendly usage
+**GitHub**: https://github.com/jonnyzzz/stevedore/issues/13
+
+Stevedore should expose recommended workflows, log locations, and machine-readable
+status hints in CLI help/output so automated agents can follow the correct patterns.
