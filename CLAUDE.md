@@ -699,6 +699,57 @@ Following stevedore project conventions:
 - [ ] Push and verify CI passes
 - [ ] Deploy to production and verify
 
+## Agent Recipes
+
+### Task Start Routine
+1. Re-read GitHub issues for this repo before starting any task:
+   ```bash
+   gh issue list -R jonnyzzz/stevedore-dyndns
+   ```
+2. Re-scan TODO.md for the local task queue.
+
+### CI + Logs Workflow
+1. Run unit tests:
+   ```bash
+   go test ./...
+   ```
+2. Run integration test (requires Docker):
+   ```bash
+   go test -tags=integration ./internal/caddy -run TestWebSocketProxyIntegration
+   ```
+3. Push changes, then wait for CI:
+   ```bash
+   git push
+   for i in {1..30}; do
+     gh run list -R jonnyzzz/stevedore-dyndns --limit 1 \
+       --json status,conclusion,displayTitle,createdAt \
+       --jq '.[0] | "\(.status)\t\(.conclusion)\t\(.displayTitle)\t\(.createdAt)"'
+     sleep 10
+   done
+   ```
+4. If CI fails, fetch the failed log for the latest run:
+   ```bash
+   run_id=$(gh run list -R jonnyzzz/stevedore-dyndns --limit 1 --json databaseId --jq '.[0].databaseId')
+   gh run view -R jonnyzzz/stevedore-dyndns "$run_id" --log-failed
+   ```
+
+### Codex CLI Usage (for parallel sub-tasks)
+- Use Codex for focused, non-interactive work; capture clean output:
+  ```bash
+  codex exec --output-last-message /tmp/codex-output.txt "Your prompt"
+  cat /tmp/codex-output.txt
+  ```
+- Use `-i` only for images; for text files, instruct Codex to read file paths.
+
+### Docker Local Deploy
+```bash
+docker compose up --build -d
+```
+If Docker socket access fails, ensure Docker Desktop is running and rerun with proper permissions.
+
+### Caddy Access Logs (runtime)
+- Access logs are written to `/var/log/dyndns/caddy-access.log` and streamed to stdout by the entrypoint.
+
 ## Related Projects
 
 - [Stevedore](https://github.com/jonnyzzz/stevedore) - Container orchestration for this service
