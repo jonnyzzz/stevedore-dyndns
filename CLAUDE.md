@@ -292,7 +292,7 @@ This project is designed to run as a Stevedore deployment, providing ingress rou
 2. **Persistent Storage**: Uses `${STEVEDORE_DATA}` for certificates and state
 3. **Shared Configuration**: Uses `${STEVEDORE_SHARED}` for cross-deployment mappings
 4. **Health Check**: Exposes `/health` endpoint for Stevedore monitoring
-5. **Logging**: Writes to `${STEVEDORE_LOGS}` directory
+5. **Logging**: Caddy access logs are written to `${STEVEDORE_LOGS}/caddy-access.log` and streamed to container stdout; runtime logs stay in `${STEVEDORE_LOGS}`
 6. **Host Network**: Uses `network_mode: host` for direct Fritzbox access and simplified routing
 
 ### Quick Setup (Automated)

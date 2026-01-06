@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.3] - 2026-01-06
+
+### Added
+- **Access Log Streaming**: Caddy access logs are streamed to container stdout via entrypoint tailing
+- **WebSocket Access Log Check**: Integration test verifies `/ws` upgrade requests are logged
+
+### Fixed
+- **Cloudflare Retries**: Added transient network retry handling for Cloudflare API calls
+- **Caddy Access Logging**: Enabled per-site access logs so WebSocket upgrades are recorded
+
 ## [0.9.2] - 2026-01-06
 
 ### Fixed

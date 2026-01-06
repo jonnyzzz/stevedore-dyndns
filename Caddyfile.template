@@ -44,6 +44,15 @@
 {{end}}
     }
 
+    # Access logs (streamed to container stdout via entrypoint)
+    log {
+        output file /var/log/dyndns/caddy-access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
+    }
+
     # Dynamic routing based on subdomain
     {{range .Mappings}}
     @{{.Subdomain}} host {{.FQDN}}

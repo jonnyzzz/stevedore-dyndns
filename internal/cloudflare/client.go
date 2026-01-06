@@ -87,9 +87,12 @@ func (c *Client) UpdateRecord(ctx context.Context, name string, recordType strin
 
 	if !cached {
 		// Look up existing record
-		records, _, err := c.api.ListDNSRecords(ctx, rc, cloudflare.ListDNSRecordsParams{
-			Name: name,
-			Type: recordType,
+		records, err := withRetry(ctx, "list_dns_records", func() ([]cloudflare.DNSRecord, error) {
+			records, _, err := c.api.ListDNSRecords(ctx, rc, cloudflare.ListDNSRecordsParams{
+				Name: name,
+				Type: recordType,
+			})
+			return records, err
 		})
 		if err != nil {
 			return fmt.Errorf("failed to list DNS records: %w", err)
@@ -111,13 +114,15 @@ func (c *Client) UpdateRecord(ctx context.Context, name string, recordType strin
 
 	if recordID != "" {
 		// Update existing record
-		_, err := c.api.UpdateDNSRecord(ctx, rc, cloudflare.UpdateDNSRecordParams{
-			ID:      recordID,
-			Type:    recordType,
-			Name:    name,
-			Content: content,
-			TTL:     ttl,
-			Proxied: cloudflare.BoolPtr(c.proxied),
+		_, err := withRetry(ctx, "update_dns_record", func() (cloudflare.DNSRecord, error) {
+			return c.api.UpdateDNSRecord(ctx, rc, cloudflare.UpdateDNSRecordParams{
+				ID:      recordID,
+				Type:    recordType,
+				Name:    name,
+				Content: content,
+				TTL:     ttl,
+				Proxied: cloudflare.BoolPtr(c.proxied),
+			})
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update DNS record: %w", err)
@@ -125,12 +130,14 @@ func (c *Client) UpdateRecord(ctx context.Context, name string, recordType strin
 		slog.Debug("Updated DNS record", "name", name, "type", recordType, "content", content, "ttl", ttl, "proxied", c.proxied)
 	} else {
 		// Create new record
-		record, err := c.api.CreateDNSRecord(ctx, rc, cloudflare.CreateDNSRecordParams{
-			Type:    recordType,
-			Name:    name,
-			Content: content,
-			TTL:     ttl,
-			Proxied: cloudflare.BoolPtr(c.proxied),
+		record, err := withRetry(ctx, "create_dns_record", func() (cloudflare.DNSRecord, error) {
+			return c.api.CreateDNSRecord(ctx, rc, cloudflare.CreateDNSRecordParams{
+				Type:    recordType,
+				Name:    name,
+				Content: content,
+				TTL:     ttl,
+				Proxied: cloudflare.BoolPtr(c.proxied),
+			})
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create DNS record: %w", err)
@@ -161,9 +168,12 @@ func (c *Client) DeleteRecord(ctx context.Context, name string, recordType strin
 
 	if !cached {
 		// Look up existing record
-		records, _, err := c.api.ListDNSRecords(ctx, rc, cloudflare.ListDNSRecordsParams{
-			Name: name,
-			Type: recordType,
+		records, err := withRetry(ctx, "list_dns_records", func() ([]cloudflare.DNSRecord, error) {
+			records, _, err := c.api.ListDNSRecords(ctx, rc, cloudflare.ListDNSRecordsParams{
+				Name: name,
+				Type: recordType,
+			})
+			return records, err
 		})
 		if err != nil {
 			return fmt.Errorf("failed to list DNS records: %w", err)
@@ -174,7 +184,9 @@ func (c *Client) DeleteRecord(ctx context.Context, name string, recordType strin
 		recordID = records[0].ID
 	}
 
-	if err := c.api.DeleteDNSRecord(ctx, rc, recordID); err != nil {
+	if _, err := withRetry(ctx, "delete_dns_record", func() (struct{}, error) {
+		return struct{}{}, c.api.DeleteDNSRecord(ctx, rc, recordID)
+	}); err != nil {
 		return fmt.Errorf("failed to delete DNS record: %w", err)
 	}
 
@@ -188,7 +200,9 @@ func (c *Client) DeleteRecord(ctx context.Context, name string, recordType strin
 
 // GetZoneInfo returns information about the configured zone
 func (c *Client) GetZoneInfo(ctx context.Context) (*cloudflare.Zone, error) {
-	zone, err := c.api.ZoneDetails(ctx, c.zoneID)
+	zone, err := withRetry(ctx, "zone_details", func() (cloudflare.Zone, error) {
+		return c.api.ZoneDetails(ctx, c.zoneID)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get zone details: %w", err)
 	}
@@ -211,9 +225,12 @@ func (c *Client) Domain() string {
 func (c *Client) SetSSLMode(ctx context.Context, mode string) error {
 	rc := cloudflare.ZoneIdentifier(c.zoneID)
 
-	_, err := c.api.UpdateZoneSetting(ctx, rc, cloudflare.UpdateZoneSettingParams{
-		Name:  "ssl",
-		Value: mode,
+	_, err := withRetry(ctx, "set_ssl_mode", func() (struct{}, error) {
+		_, err := c.api.UpdateZoneSetting(ctx, rc, cloudflare.UpdateZoneSettingParams{
+			Name:  "ssl",
+			Value: mode,
+		})
+		return struct{}{}, err
 	})
 	if err != nil {
 		return fmt.Errorf("failed to set SSL mode to %q: %w", mode, err)
@@ -227,8 +244,10 @@ func (c *Client) SetSSLMode(ctx context.Context, mode string) error {
 func (c *Client) GetSSLMode(ctx context.Context) (string, error) {
 	rc := cloudflare.ZoneIdentifier(c.zoneID)
 
-	setting, err := c.api.GetZoneSetting(ctx, rc, cloudflare.GetZoneSettingParams{
-		Name: "ssl",
+	setting, err := withRetry(ctx, "get_ssl_mode", func() (cloudflare.ZoneSetting, error) {
+		return c.api.GetZoneSetting(ctx, rc, cloudflare.GetZoneSettingParams{
+			Name: "ssl",
+		})
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to get SSL mode: %w", err)
@@ -244,7 +263,10 @@ func (c *Client) GetSSLMode(ctx context.Context) (string, error) {
 // When enabled, Cloudflare presents a client certificate when connecting to the origin.
 // The origin should validate this certificate to ensure requests come from Cloudflare.
 func (c *Client) SetAuthenticatedOriginPull(ctx context.Context, enabled bool) error {
-	_, err := c.api.SetPerZoneAuthenticatedOriginPullsStatus(ctx, c.zoneID, enabled)
+	_, err := withRetry(ctx, "set_authenticated_origin_pull", func() (struct{}, error) {
+		_, err := c.api.SetPerZoneAuthenticatedOriginPullsStatus(ctx, c.zoneID, enabled)
+		return struct{}{}, err
+	})
 	if err != nil {
 		return fmt.Errorf("failed to set Authenticated Origin Pull to %v: %w", enabled, err)
 	}
@@ -255,7 +277,9 @@ func (c *Client) SetAuthenticatedOriginPull(ctx context.Context, enabled bool) e
 
 // IsAuthenticatedOriginPullEnabled returns whether Authenticated Origin Pull is enabled.
 func (c *Client) IsAuthenticatedOriginPullEnabled(ctx context.Context) (bool, error) {
-	status, err := c.api.GetPerZoneAuthenticatedOriginPullsStatus(ctx, c.zoneID)
+	status, err := withRetry(ctx, "get_authenticated_origin_pull", func() (cloudflare.PerZoneAuthenticatedOriginPullsSettings, error) {
+		return c.api.GetPerZoneAuthenticatedOriginPullsStatus(ctx, c.zoneID)
+	})
 	if err != nil {
 		return false, fmt.Errorf("failed to get Authenticated Origin Pull status: %w", err)
 	}
@@ -287,16 +311,22 @@ func (c *Client) GetManagedRecordFQDNs(ctx context.Context) ([]string, error) {
 	rc := cloudflare.ZoneIdentifier(c.zoneID)
 
 	// Get all A records
-	aRecords, _, err := c.api.ListDNSRecords(ctx, rc, cloudflare.ListDNSRecordsParams{
-		Type: "A",
+	aRecords, err := withRetry(ctx, "list_dns_records_a", func() ([]cloudflare.DNSRecord, error) {
+		records, _, err := c.api.ListDNSRecords(ctx, rc, cloudflare.ListDNSRecordsParams{
+			Type: "A",
+		})
+		return records, err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list A records: %w", err)
 	}
 
 	// Get all AAAA records
-	aaaaRecords, _, err := c.api.ListDNSRecords(ctx, rc, cloudflare.ListDNSRecordsParams{
-		Type: "AAAA",
+	aaaaRecords, err := withRetry(ctx, "list_dns_records_aaaa", func() ([]cloudflare.DNSRecord, error) {
+		records, _, err := c.api.ListDNSRecords(ctx, rc, cloudflare.ListDNSRecordsParams{
+			Type: "AAAA",
+		})
+		return records, err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list AAAA records: %w", err)

@@ -9,6 +9,11 @@ echo "Log Level: ${LOG_LEVEL:-info}"
 
 # Ensure data directories exist
 mkdir -p /data/caddy /config/caddy /var/log/dyndns
+touch /var/log/dyndns/caddy-access.log
+
+# Stream Caddy access logs to stdout for docker logs visibility
+tail -n0 -F /var/log/dyndns/caddy-access.log &
+TAIL_PID=$!
 
 # Set Caddy environment
 export XDG_DATA_HOME=/data
@@ -74,6 +79,7 @@ fi
 # Function to handle shutdown
 shutdown() {
     echo "Shutting down..."
+    kill -TERM "$TAIL_PID" 2>/dev/null || true
     kill -TERM "$CADDY_PID" 2>/dev/null || true
     kill -TERM "$DYNDNS_PID" 2>/dev/null || true
     wait

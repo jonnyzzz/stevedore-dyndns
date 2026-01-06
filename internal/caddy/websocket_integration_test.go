@@ -106,6 +106,10 @@ func TestWebSocketProxyIntegration(t *testing.T) {
 	t.Run("WebSocket_MultipleMessages", func(t *testing.T) {
 		testWebSocketMultipleMessages(t, certs, "127.0.0.1:"+caddyHostPort)
 	})
+
+	if err := waitForAccessLogEntry(t, caddyContainerID, "/ws", 10*time.Second); err != nil {
+		t.Fatalf("expected WebSocket access log entry, got error: %v", err)
+	}
 }
 
 // startWebSocketEchoServer starts a WebSocket echo server using a simple container
@@ -151,6 +155,10 @@ func generateWebSocketCaddyfile(certs *testCertificates, wsServerHost, wsServerP
 
 :8443 {
     tls /certs/server.pem /certs/server-key.pem
+    log {
+        output stdout
+        format json
+    }
 
     reverse_proxy %s:%s {
         transport http {
@@ -247,7 +255,7 @@ func waitForCaddyReady(t *testing.T, httpsPort string, timeout time.Duration) er
 // testWebSocketUpgrade tests that WebSocket upgrade handshake succeeds
 func testWebSocketUpgrade(t *testing.T, certs *testCertificates, serverAddr string) {
 	dialer := createWebSocketDialer(certs)
-	url := fmt.Sprintf("wss://%s/", serverAddr)
+	url := fmt.Sprintf("wss://%s/ws", serverAddr)
 
 	conn, resp, err := dialer.Dial(url, nil)
 	if err != nil {
@@ -270,7 +278,7 @@ func testWebSocketUpgrade(t *testing.T, certs *testCertificates, serverAddr stri
 // testWebSocketEcho tests bidirectional message exchange
 func testWebSocketEcho(t *testing.T, certs *testCertificates, serverAddr string) {
 	dialer := createWebSocketDialer(certs)
-	url := fmt.Sprintf("wss://%s/", serverAddr)
+	url := fmt.Sprintf("wss://%s/ws", serverAddr)
 
 	conn, _, err := dialer.Dial(url, nil)
 	if err != nil {
@@ -305,7 +313,7 @@ func testWebSocketEcho(t *testing.T, certs *testCertificates, serverAddr string)
 // testWebSocketMultipleMessages tests multiple consecutive messages
 func testWebSocketMultipleMessages(t *testing.T, certs *testCertificates, serverAddr string) {
 	dialer := createWebSocketDialer(certs)
-	url := fmt.Sprintf("wss://%s/", serverAddr)
+	url := fmt.Sprintf("wss://%s/ws", serverAddr)
 
 	conn, _, err := dialer.Dial(url, nil)
 	if err != nil {
@@ -353,4 +361,26 @@ func createTLSConfigForWebSocket(certs *testCertificates) *tls.Config {
 		InsecureSkipVerify: true, // Skip server cert verification for Docker IP
 		MinVersion:         tls.VersionTLS12,
 	}
+}
+
+func waitForAccessLogEntry(t *testing.T, containerID, needle string, timeout time.Duration) error {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	var lastLogs string
+
+	for time.Now().Before(deadline) {
+		logs, err := getContainerLogs(containerID)
+		if err == nil {
+			lastLogs = logs
+			if strings.Contains(logs, needle) {
+				return nil
+			}
+		} else {
+			t.Logf("Failed to read container logs: %v", err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return fmt.Errorf("access log entry %q not found within %s\nlogs:\n%s", needle, timeout, lastLogs)
 }
