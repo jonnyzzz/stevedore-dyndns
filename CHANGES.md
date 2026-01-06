@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.4] - 2026-01-06
+
+### Fixed
+- **Health Listener HTTP**: Force HTTP on `127.0.0.1:8080` to prevent HTTPS mismatch in container health checks
+
 ## [0.9.3] - 2026-01-06
 
 ### Added

@@ -208,15 +208,35 @@ func TestTemplateFunctions(t *testing.T) {
 	}
 }
 
+func TestGenerateContent_HealthCheckHTTP(t *testing.T) {
+	cfg := &config.Config{
+		Domain:    "example.com",
+		AcmeEmail: "test@example.com",
+		LogLevel:  "info",
+	}
+
+	gen := New(cfg, nil)
+	gen.TemplatePath = filepath.Join("..", "..", "Caddyfile.template")
+
+	content, err := gen.GenerateContent()
+	if err != nil {
+		t.Fatalf("GenerateContent() error: %v", err)
+	}
+
+	if !strings.Contains(content, "http://127.0.0.1:8080") {
+		t.Fatalf("expected HTTP health listener, got:\n%s", content)
+	}
+}
+
 // Test that Caddyfile content is properly formatted
 func TestCaddyfileFormat(t *testing.T) {
 	// Expected patterns in a properly formatted Caddyfile
 	expectedPatterns := []string{
-		"*.example.com",         // Wildcard domain
-		"tls {",                 // TLS block
-		"dns cloudflare",        // Cloudflare DNS challenge
-		"reverse_proxy",         // Reverse proxy directive
-		"header_up X-Real-IP",   // Forwarded headers
+		"*.example.com",       // Wildcard domain
+		"tls {",               // TLS block
+		"dns cloudflare",      // Cloudflare DNS challenge
+		"reverse_proxy",       // Reverse proxy directive
+		"header_up X-Real-IP", // Forwarded headers
 	}
 
 	// Sample Caddyfile content (what we expect the template to produce)
