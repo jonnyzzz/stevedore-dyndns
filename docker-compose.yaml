@@ -14,6 +14,8 @@ services:
   dyndns:
     build: .
     image: stevedore-dyndns:latest
+    # tini as PID 1 so orphaned subprocesses are reaped. Required by stevedore.
+    init: true
     restart: unless-stopped
 
     # Ports for HTTPS reverse proxy
