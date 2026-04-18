@@ -256,18 +256,22 @@ mappings:
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	// Wait for change notification
-	select {
-	case <-changed:
-		// Success - file creation was detected
-	case <-time.After(2 * time.Second):
-		t.Error("Watch() did not detect new file creation")
-	}
-
-	// Verify mappings were loaded
-	mappings := mgr.Get()
-	if len(mappings) != 1 {
-		t.Errorf("After file creation, got %d mappings, want 1", len(mappings))
+	// os.WriteFile on Linux fires a fsnotify CREATE as soon as the file is
+	// opened (before its content is written), so the first notification may
+	// reflect an empty file. Wait for the *end state* — the mappings loaded
+	// correctly — rather than the first event. The WRITE event that follows
+	// fires another reload and the final content settles.
+	deadline := time.After(2 * time.Second)
+	for {
+		if len(mgr.Get()) == 1 {
+			return // success: content observed
+		}
+		select {
+		case <-changed:
+			// Another event arrived; loop and re-check mgr.Get().
+		case <-deadline:
+			t.Fatalf("Watch() never loaded the mapping: got %d mappings, want 1", len(mgr.Get()))
+		}
 	}
 }
 

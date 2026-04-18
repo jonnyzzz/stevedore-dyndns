@@ -48,8 +48,8 @@ jobs:
       - name: Run golangci-lint
         # v1.x of golangci-lint is built with Go 1.24 and refuses a
         # go.mod targeting Go 1.26. v2.x is built with Go 1.26; the
-        # v6 action is required to understand v2's config format.
-        uses: golangci/golangci-lint-action@v6
+        # v7 action is required — v6 rejects v2 with "invalid version".
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.1
 
