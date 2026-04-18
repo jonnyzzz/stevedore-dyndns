@@ -1,6 +1,10 @@
 module github.com/jonnyzzz/stevedore-dyndns
 
-go 1.26
+// Language version only — the toolchain (Dockerfile, workflow) runs Go 1.26.
+// Staying at 1.25 here lets golangci-lint v2.x (currently built with Go 1.24)
+// load the config; it refuses to operate on modules whose declared go version
+// is newer than the version it was built with.
+go 1.25
 
 require (
 	github.com/cloudflare/cloudflare-go v0.86.0
