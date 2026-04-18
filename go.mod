@@ -1,6 +1,6 @@
 module github.com/jonnyzzz/stevedore-dyndns
 
-go 1.21
+go 1.26
 
 require (
 	github.com/cloudflare/cloudflare-go v0.86.0
