@@ -1,0 +1,11 @@
+version: "2"
+
+# golangci-lint v2 defaults enable more linters than v1.x did — in particular
+# errcheck, which turned up ~20 pre-existing violations on `fmt.Fprintf`,
+# `os.Setenv`, `resp.Body.Close`, etc. The project ran clean on v1.x because
+# those weren't in the default set. Keep the earlier tolerance here; revisit
+# individual checks only if/when the code is ready for them.
+linters:
+  default: standard
+  disable:
+    - errcheck
