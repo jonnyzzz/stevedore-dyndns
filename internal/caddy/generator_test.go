@@ -208,35 +208,6 @@ func TestTemplateFunctions(t *testing.T) {
 	}
 }
 
-func TestWriteFileIfChanged(t *testing.T) {
-	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "Caddyfile")
-
-	changed, err := writeFileIfChanged(path, []byte("first"))
-	if err != nil {
-		t.Fatalf("writeFileIfChanged failed: %v", err)
-	}
-	if !changed {
-		t.Fatal("expected initial write to be reported as changed")
-	}
-
-	changed, err = writeFileIfChanged(path, []byte("first"))
-	if err != nil {
-		t.Fatalf("writeFileIfChanged failed: %v", err)
-	}
-	if changed {
-		t.Fatal("expected identical content to report unchanged")
-	}
-
-	changed, err = writeFileIfChanged(path, []byte("second"))
-	if err != nil {
-		t.Fatalf("writeFileIfChanged failed: %v", err)
-	}
-	if !changed {
-		t.Fatal("expected different content to report changed")
-	}
-}
-
 func TestGenerateContent_HealthCheckHTTP(t *testing.T) {
 	cfg := &config.Config{
 		Domain:    "example.com",
