@@ -17,7 +17,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.26'
           cache: true
 
       - name: Download dependencies
@@ -42,13 +42,16 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.26'
           cache: true
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v4
+        # v1.x of golangci-lint is built with Go 1.24 and refuses a
+        # go.mod targeting Go 1.26. v2.x is built with Go 1.26; the
+        # v6 action is required to understand v2's config format.
+        uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v2.1
 
   build:
     name: Build
@@ -61,7 +64,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.26'
           cache: true
 
       - name: Build binary
@@ -108,7 +111,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.26'
           cache: true
 
       - name: Run integration tests
