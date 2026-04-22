@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-04-22
+
+### Added
+- **README.md** with a setup-oriented overview, explicit link to
+  [9seconds/mtg](https://github.com/9seconds/mtg) as the MTProto library,
+  and a clear "Telegram bot is optional" callout.
+- **MTProto FQDN bindings**: `MTPROTO_SUBDOMAINS` entries that contain a dot
+  are accepted as fully qualified hostnames (e.g. a sibling zone), bypassing
+  prefix-mode substitution.
+- **Per-kind Telegram message dedup**: the bot tracks one live message per
+  `(chat_id, kind)` and deletes the prior post when a new one is published
+  for the same kind. The startup binding announcement and the rotation
+  message for the same FQDN collapse into a single chat message.
+
+### Fixed
+- **Compose env-var forwarding**: MTProto / Telegram / CATCHALL variables
+  are now listed in `docker-compose.yaml`'s environment block. Previously,
+  setting them via `stevedore param set` had no effect on the container.
+- **Container data paths**: `DYNDNS_DATA` / `DYNDNS_LOGS` now point at the
+  container-side mount paths (`/data`, `/var/log/dyndns`) instead of the
+  host path, so MTProto secrets persist across rebuilds.
+- **Telegram API decoder**: accept unknown fields in Bot-API responses —
+  `getMe` and `sendMessage` return many optional fields we don't model and
+  strict decoding broke the bot on startup.
+- **Caddy TLS policy ordering**: direct-mode, MTProto-bound, and catchall
+  sites now emit `client_auth { mode request }` as a policy differentiator.
+  Without it, Caddyfile merged non-mTLS sites into an empty catch-all
+  policy that lost the SNI-match walk to the `*.domain` wildcard's
+  require_and_verify policy, forcing plain browser clients to fail with
+  `tlsv13 alert certificate required`.
+
 ## [0.11.0] - 2026-04-22
 
 ### Added

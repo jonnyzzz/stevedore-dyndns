@@ -196,6 +196,105 @@ SUBDOMAIN_PREFIX=true
 
 ---
 
+### Mode 3: MTProto Dispatcher (Optional, coexists with Modes 1/2)
+
+**Configuration:**
+```bash
+MTPROTO_DISPATCHER=true
+MTPROTO_SUBDOMAINS="mtp.home.example.com"   # comma-separated; FQDN or short label
+# Optional tuning:
+MTPROTO_CADDY_LOOPBACK="127.0.0.1:8443"     # where Caddy is moved to
+MTPROTO_MAX_CONNECTIONS=8192                 # dispatcher's in-flight cap
+MTPROTO_DATA_DIR="/data/mtproto"             # default; holds <sub>.secret/<sub>.tg
+```
+
+When enabled, dyndns binds port 443 itself and Caddy is relocated to a
+loopback-only port. Each incoming TLS connection has its `ClientHello`
+peeked (bounded, deadline-aware) and routed by SNI:
+
+- **SNI ∈ MTProto-bound subdomains** → connection is handed to an embedded
+  instance of [9seconds/mtg](https://github.com/9seconds/mtg) keyed on the
+  SNI. mtg performs the FakeTLS handshake for Telegram clients; requests
+  that don't match FakeTLS fall through mtg's own domain-fronting path to
+  Caddy on the loopback port and receive a normal HTTPS response.
+- **Other SNIs** → raw TCP splice to Caddy on the loopback port (pre-pending
+  the already-peeked bytes). Caddy behaves identically to Modes 1/2.
+- **Non-TLS bytes** → connection closed. The dispatcher never forwards
+  plaintext to Caddy's HTTPS listener.
+
+**Secrets** are generated on first run and persisted under `MTPROTO_DATA_DIR`:
+```
+<MTPROTO_DATA_DIR>/<subdomain>.secret    # hex-encoded mtg secret, mode 0600
+<MTPROTO_DATA_DIR>/<subdomain>.tg        # tg://proxy?server=<fqdn>&port=443&secret=…
+```
+
+Rotating a secret (via the Telegram bot below, or by deleting the
+`.secret` file and restarting) invalidates outstanding Telegram-client
+state for that subdomain; the service restarts to pick up the new
+material, since mtg's `Proxy` instances are constructed once at startup.
+
+**Binding a subdomain to a Stevedore service**: if a service is registered
+with `stevedore.ingress.subdomain` matching one of `MTPROTO_SUBDOMAINS`,
+Caddy reverse-proxies browser traffic to that service while MTProto still
+runs upstream. Otherwise the site responds `OK, it's 451` so plain
+browser hits answer cleanly without leaking an error page.
+
+**Why a separate dispatcher rather than a sidecar mtg container?** The
+1-secret-equals-1-hostname design of mtg maps neatly to a
+`map[sni]→mtglib.Proxy` in the same process that already owns the
+Caddyfile. One binary, one set of logs, one health endpoint, no separate
+SNI router.
+
+**SSL details inside the dispatcher layer**: each MTProto-bound subdomain
+has a dedicated Caddy site block with `client_auth { mode request }` — a
+deliberate no-op TLS option that forces the Caddyfile adapter to emit a
+distinct TLS connection policy with the subdomain's SNI in the match
+list. Without it, the adapter merges non-mTLS sites into a single empty
+catch-all policy that loses policy-walk precedence to the wildcard
+`*.domain` block's mTLS policy, which would demand a client cert.
+
+---
+
+### Mode 4: Telegram Bot (Optional, independent of Mode 3)
+
+**Configuration:**
+```bash
+TELEGRAM_BOT_TOKEN="<token from BotFather>"
+TELEGRAM_BOT_CHAT_IDS="<your Telegram user id or group id>"
+# Add your Telegram user ID to internal/telegram/allowlist.go and redeploy.
+```
+
+When `TELEGRAM_BOT_TOKEN` is non-empty, dyndns launches a small
+long-polling bot that:
+
+- Publishes the `tg://proxy?…` URL for each MTProto binding on startup,
+  and again after any `/rotate`. Repeat posts DELETE the prior message
+  in the same chat (tracked per-chat-per-kind in
+  `<MTPROTO_DATA_DIR>/telegram_last_msgs.json`) so the chat stays a
+  single live link per binding.
+- Accepts `/status` and `/rotate <subdomain>` commands ONLY from
+  private chats with allow-listed user IDs. In groups the bot is
+  write-only: it never acknowledges or responds to messages, but it can
+  be added to a group to receive broadcast notifications there.
+
+**Allow-list** is compile-time, in
+[`internal/telegram/allowlist.go`](internal/telegram/allowlist.go). This
+is deliberate — a stevedore-param leak should not grant command access
+to the bot. Adding a new admin is a code change + redeploy.
+
+**Rotating a secret**:
+1. Admin sends `/rotate <subdomain>` to the bot in a DM.
+2. Bot confirms, triggers a new 16-byte key, persists it, posts the
+   fresh `tg://` URL (replacing the prior one).
+3. Service cancels its root context → stevedore restarts the container
+   with the new secret loaded.
+
+The bot is fully optional: the `.secret` / `.tg` files on disk plus the
+`/status` JSON endpoint (`http://127.0.0.1:8081/status`) are always
+available for secret retrieval without a bot configured.
+
+---
+
 ### All Cloudflare Features Used Are FREE
 
 This service only uses features available on Cloudflare's **free plan**:
