@@ -14,12 +14,16 @@ import (
 	"time"
 )
 
-// API client interface covers the two Telegram methods this bot needs;
+// API client interface covers the Telegram methods this bot needs;
 // exposing an interface makes the message flow straightforward to mock.
+//
+// SendMessage returns the sent message's ID so callers can schedule later
+// deletions (see MessageStore + PostURLMessage).
 type API interface {
 	GetMe(ctx context.Context) (string, error)
 	GetUpdates(ctx context.Context, offset int64, timeout int) ([]Update, error)
-	SendMessage(ctx context.Context, chatID int64, text string) error
+	SendMessage(ctx context.Context, chatID int64, text string) (int64, error)
+	DeleteMessage(ctx context.Context, chatID, messageID int64) error
 }
 
 // Update mirrors the subset of the Telegram Update object we consume.
@@ -86,13 +90,18 @@ type Bot struct {
 	// restart, when non-nil, is invoked after a successful /rotate so the
 	// host can signal a clean service restart. The bot does not exit itself.
 	restart func()
+	// messages optionally tracks the "current URL post" per chat so we can
+	// delete the prior one before posting a new one (keeps the chat tidy).
+	// When nil, PostURLMessage degrades to a plain Broadcast.
+	messages *MessageStore
 
 	mu     sync.Mutex
 	offset int64
 }
 
 // NewBot constructs a bot ready for Run. The restart callback is optional.
-func NewBot(api API, handlers Handlers, notifyChats []int64, log *slog.Logger, restart func()) *Bot {
+// messages may be nil, in which case PostURLMessage degrades to Broadcast.
+func NewBot(api API, handlers Handlers, notifyChats []int64, log *slog.Logger, restart func(), messages *MessageStore) *Bot {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -102,6 +111,7 @@ func NewBot(api API, handlers Handlers, notifyChats []int64, log *slog.Logger, r
 		log:         log,
 		notifyChats: append([]int64(nil), notifyChats...),
 		restart:     restart,
+		messages:    messages,
 	}
 }
 
@@ -109,8 +119,37 @@ func NewBot(api API, handlers Handlers, notifyChats []int64, log *slog.Logger, r
 // but don't abort the broadcast. Safe to call concurrently with Run.
 func (b *Bot) Broadcast(ctx context.Context, text string) {
 	for _, chatID := range b.notifyChats {
-		if err := b.api.SendMessage(ctx, chatID, text); err != nil {
+		if _, err := b.api.SendMessage(ctx, chatID, text); err != nil {
 			b.log.Warn("telegram broadcast failed", "chat_id", chatID, "error", err)
+		}
+	}
+}
+
+// PostURLMessage is like Broadcast, but ensures only one "current URL" post
+// exists per chat: it deletes the previously-posted message for that chat
+// before sending the new one. The new message_id is persisted to the
+// MessageStore so this survives service restarts (secret rotation path).
+//
+// When no MessageStore is configured, the behavior is identical to Broadcast.
+func (b *Bot) PostURLMessage(ctx context.Context, text string) {
+	if b.messages == nil {
+		b.Broadcast(ctx, text)
+		return
+	}
+	for _, chatID := range b.notifyChats {
+		if prior := b.messages.Get(chatID); prior != 0 {
+			if err := b.api.DeleteMessage(ctx, chatID, prior); err != nil {
+				// Deletion is best-effort — the message may already be gone.
+				b.log.Debug("telegram deleteMessage failed (proceeding)", "chat_id", chatID, "message_id", prior, "error", err)
+			}
+		}
+		msgID, err := b.api.SendMessage(ctx, chatID, text)
+		if err != nil {
+			b.log.Warn("telegram PostURLMessage send failed", "chat_id", chatID, "error", err)
+			continue
+		}
+		if err := b.messages.Set(chatID, msgID); err != nil {
+			b.log.Warn("telegram message store write failed", "chat_id", chatID, "message_id", msgID, "error", err)
 		}
 	}
 }
@@ -227,7 +266,7 @@ func (b *Bot) handleRotate(ctx context.Context, chatID int64, arg string) {
 }
 
 func (b *Bot) reply(ctx context.Context, chatID int64, text string) {
-	if err := b.api.SendMessage(ctx, chatID, text); err != nil {
+	if _, err := b.api.SendMessage(ctx, chatID, text); err != nil {
 		b.log.Warn("telegram reply failed", "chat_id", chatID, "error", err)
 	}
 }
@@ -311,21 +350,45 @@ func (a *HTTPAPI) GetUpdates(ctx context.Context, offset int64, timeout int) ([]
 	return result.Result, nil
 }
 
-func (a *HTTPAPI) SendMessage(ctx context.Context, chatID int64, text string) error {
+func (a *HTTPAPI) SendMessage(ctx context.Context, chatID int64, text string) (int64, error) {
 	params := url.Values{}
 	params.Set("chat_id", fmt.Sprintf("%d", chatID))
 	params.Set("text", text)
 	params.Set("disable_web_page_preview", "true")
 
 	var result struct {
-		Ok          bool   `json:"ok"`
+		Ok     bool `json:"ok"`
+		Result struct {
+			MessageID int64 `json:"message_id"`
+		} `json:"result"`
 		Description string `json:"description,omitempty"`
 	}
 	if err := a.call(ctx, "sendMessage", params, &result); err != nil {
+		return 0, err
+	}
+	if !result.Ok {
+		return 0, fmt.Errorf("telegram sendMessage: %s", result.Description)
+	}
+	return result.Result.MessageID, nil
+}
+
+// DeleteMessage deletes a previously-sent message. Telegram lets bots delete
+// their own messages within 48 hours with no extra permissions; after that
+// (or for non-own messages) the bot needs delete rights in the chat.
+func (a *HTTPAPI) DeleteMessage(ctx context.Context, chatID, messageID int64) error {
+	params := url.Values{}
+	params.Set("chat_id", fmt.Sprintf("%d", chatID))
+	params.Set("message_id", fmt.Sprintf("%d", messageID))
+
+	var result struct {
+		Ok          bool   `json:"ok"`
+		Description string `json:"description,omitempty"`
+	}
+	if err := a.call(ctx, "deleteMessage", params, &result); err != nil {
 		return err
 	}
 	if !result.Ok {
-		return fmt.Errorf("telegram sendMessage: %s", result.Description)
+		return fmt.Errorf("telegram deleteMessage: %s", result.Description)
 	}
 	return nil
 }

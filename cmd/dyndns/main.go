@@ -127,8 +127,14 @@ func main() {
 
 	// Telegram bot (optional). Runs in its own goroutine; broadcasts the
 	// generated bindings on startup so the admin has an easy copy path.
+	// The prior URL message in each chat is deleted first so chats don't
+	// accumulate stale posts across restarts / rotations.
 	if cfg.TelegramBotToken != "" {
-		bot := newTelegramBot(cfg, mtprotoRuntime, mtprotoStore, logger, cancel)
+		bot, err := newTelegramBot(cfg, mtprotoRuntime, mtprotoStore, logger, cancel)
+		if err != nil {
+			slog.Error("Failed to construct Telegram bot", "error", err)
+			os.Exit(1)
+		}
 		go func() {
 			if err := bot.Run(ctx); err != nil {
 				slog.Error("Telegram bot exited with error", "error", err)
@@ -140,7 +146,7 @@ func main() {
 					"MTProto binding ready for %s (fp=%s)\n%s",
 					b.FQDN, b.Fingerprint(), b.TelegramURL(),
 				)
-				bot.Broadcast(ctx, text)
+				bot.PostURLMessage(ctx, text)
 			}
 		}
 	}
@@ -272,13 +278,23 @@ func (h *telegramHandlers) NotifyRotated(b telegram.Binding) {
 // newTelegramBot constructs the bot with a concrete HTTP API client and an
 // adapter over the MTProto runtime + store. The restart callback cancels
 // the root context so Stevedore can restart dyndns with the new secret.
-func newTelegramBot(cfg *config.Config, rt *mtproto.Runtime, store *mtproto.Store, logger *slog.Logger, cancel context.CancelFunc) *telegram.Bot {
+//
+// A persistent MessageStore keeps track of the "current URL post" per chat
+// so subsequent broadcasts delete the prior message, keeping the chat tidy
+// across service restarts (e.g. after /rotate).
+func newTelegramBot(cfg *config.Config, rt *mtproto.Runtime, store *mtproto.Store, logger *slog.Logger, cancel context.CancelFunc) (*telegram.Bot, error) {
 	api := telegram.NewHTTPAPI(cfg.TelegramBotToken, nil)
+	msgPath := cfg.MTProtoDataDir + "/telegram_last_msgs.json"
+	msgStore, err := telegram.NewMessageStore(msgPath)
+	if err != nil {
+		return nil, fmt.Errorf("telegram message store: %w", err)
+	}
 	handlers := &telegramHandlers{cfg: cfg, runtime: rt, store: store}
-	bot := telegram.NewBot(api, handlers, cfg.TelegramBotChatIDs, logger.With("component", "telegram"), cancel)
-	// Wire NotifyRotated through the bot's broadcast surface.
-	handlers.notify = bot.Broadcast
-	return bot
+	bot := telegram.NewBot(api, handlers, cfg.TelegramBotChatIDs, logger.With("component", "telegram"), cancel, msgStore)
+	// NotifyRotated uses the URL-post path so the rotation message also
+	// replaces the prior one.
+	handlers.notify = bot.PostURLMessage
+	return bot, nil
 }
 
 // logMTProtoBindings emits a one-time INFO entry per bound subdomain so the

@@ -10,16 +10,24 @@ import (
 )
 
 type fakeAPI struct {
-	mu       sync.Mutex
-	updates  [][]Update
-	sent     []sentMessage
-	username string
-	cancel   context.CancelFunc
+	mu        sync.Mutex
+	updates   [][]Update
+	sent      []sentMessage
+	deleted   []deletedMessage
+	username  string
+	cancel    context.CancelFunc
+	nextMsgID int64
 }
 
 type sentMessage struct {
-	ChatID int64
-	Text   string
+	ChatID    int64
+	Text      string
+	MessageID int64
+}
+
+type deletedMessage struct {
+	ChatID    int64
+	MessageID int64
 }
 
 func (f *fakeAPI) GetMe(ctx context.Context) (string, error) {
@@ -41,10 +49,19 @@ func (f *fakeAPI) GetUpdates(ctx context.Context, offset int64, timeout int) ([]
 	return batch, nil
 }
 
-func (f *fakeAPI) SendMessage(ctx context.Context, chatID int64, text string) error {
+func (f *fakeAPI) SendMessage(ctx context.Context, chatID int64, text string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.sent = append(f.sent, sentMessage{ChatID: chatID, Text: text})
+	f.nextMsgID++
+	id := f.nextMsgID
+	f.sent = append(f.sent, sentMessage{ChatID: chatID, Text: text, MessageID: id})
+	return id, nil
+}
+
+func (f *fakeAPI) DeleteMessage(ctx context.Context, chatID, messageID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, deletedMessage{ChatID: chatID, MessageID: messageID})
 	return nil
 }
 
@@ -74,7 +91,7 @@ func runOnce(t *testing.T, api *fakeAPI, handlers *fakeHandlers, allow []int64) 
 
 	ctx, cancel := context.WithCancel(context.Background())
 	api.cancel = cancel
-	b := NewBot(api, handlers, []int64{}, nil, nil)
+	b := NewBot(api, handlers, []int64{}, nil, nil, nil)
 	_ = b.Run(ctx) // returns once api cancels ctx after draining updates
 	return b
 }
@@ -163,7 +180,7 @@ func TestBot_Dispatch_RotateCallsHandlerAndNotifies(t *testing.T) {
 	AllowedUsers = []int64{42}
 	ctx, cancel := context.WithCancel(context.Background())
 	api.cancel = cancel
-	b := NewBot(api, handlers, nil, nil, func() { restarted++ })
+	b := NewBot(api, handlers, nil, nil, func() { restarted++ }, nil)
 	_ = b.Run(ctx)
 
 	if handlers.rotateIn != "mtp" {
@@ -191,7 +208,7 @@ func TestBot_Dispatch_RotateErrorSurfacedToUser(t *testing.T) {
 	AllowedUsers = []int64{42}
 	ctx, cancel := context.WithCancel(context.Background())
 	api.cancel = cancel
-	b := NewBot(api, handlers, nil, nil, nil)
+	b := NewBot(api, handlers, nil, nil, nil, nil)
 	_ = b.Run(ctx)
 
 	if len(api.sent) != 1 || !strings.Contains(api.sent[0].Text, "no such subdomain") {
@@ -219,6 +236,98 @@ func TestParseCommand(t *testing.T) {
 				t.Errorf("parseCommand(%q) = (%q, %q), want (%q, %q)", tt.in, c, a, tt.wantCmd, tt.wantArg)
 			}
 		})
+	}
+}
+
+func TestPostURLMessage_DeletesPriorAndRecordsNew(t *testing.T) {
+	api := &fakeAPI{}
+	handlers := &fakeHandlers{}
+	store, err := NewMessageStore(t.TempDir() + "/last.json")
+	if err != nil {
+		t.Fatalf("NewMessageStore: %v", err)
+	}
+	b := NewBot(api, handlers, []int64{100, 200}, nil, nil, store)
+
+	// First post: nothing to delete.
+	b.PostURLMessage(context.Background(), "first")
+	if len(api.sent) != 2 {
+		t.Fatalf("expected 2 sends, got %d", len(api.sent))
+	}
+	if len(api.deleted) != 0 {
+		t.Fatalf("expected 0 deletes on first post, got %d", len(api.deleted))
+	}
+	if got := store.Get(100); got != api.sent[0].MessageID {
+		t.Errorf("store[100] = %d, want %d", got, api.sent[0].MessageID)
+	}
+	if got := store.Get(200); got != api.sent[1].MessageID {
+		t.Errorf("store[200] = %d, want %d", got, api.sent[1].MessageID)
+	}
+
+	firstForChat100 := api.sent[0].MessageID
+	firstForChat200 := api.sent[1].MessageID
+
+	// Second post: prior message IDs should be deleted, store updates.
+	b.PostURLMessage(context.Background(), "second")
+	if len(api.deleted) != 2 {
+		t.Fatalf("expected 2 deletes on second post, got %d: %+v", len(api.deleted), api.deleted)
+	}
+	if api.deleted[0].ChatID != 100 || api.deleted[0].MessageID != firstForChat100 {
+		t.Errorf("first delete wrong: %+v, want chat=100 msg=%d", api.deleted[0], firstForChat100)
+	}
+	if api.deleted[1].ChatID != 200 || api.deleted[1].MessageID != firstForChat200 {
+		t.Errorf("second delete wrong: %+v, want chat=200 msg=%d", api.deleted[1], firstForChat200)
+	}
+	if store.Get(100) != api.sent[2].MessageID {
+		t.Errorf("store[100] not updated after second post")
+	}
+}
+
+func TestPostURLMessage_FallsBackToBroadcastWithoutStore(t *testing.T) {
+	api := &fakeAPI{}
+	handlers := &fakeHandlers{}
+	b := NewBot(api, handlers, []int64{42}, nil, nil, nil)
+
+	b.PostURLMessage(context.Background(), "first")
+	b.PostURLMessage(context.Background(), "second")
+
+	if len(api.deleted) != 0 {
+		t.Errorf("expected no deletes without a store, got %d", len(api.deleted))
+	}
+	if len(api.sent) != 2 {
+		t.Errorf("expected 2 sends, got %d", len(api.sent))
+	}
+}
+
+func TestMessageStore_RoundTrip(t *testing.T) {
+	path := t.TempDir() + "/last.json"
+	s, err := NewMessageStore(path)
+	if err != nil {
+		t.Fatalf("NewMessageStore: %v", err)
+	}
+	if err := s.Set(42, 1001); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := s.Set(-100, 5); err != nil {
+		t.Fatalf("Set negative: %v", err)
+	}
+
+	// Reload from disk.
+	s2, err := NewMessageStore(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := s2.Get(42); got != 1001 {
+		t.Errorf("Get(42) = %d, want 1001", got)
+	}
+	if got := s2.Get(-100); got != 5 {
+		t.Errorf("Get(-100) = %d, want 5", got)
+	}
+
+	if err := s2.Clear(42); err != nil {
+		t.Fatalf("Clear: %v", err)
+	}
+	if got := s2.Get(42); got != 0 {
+		t.Errorf("Get(42) after Clear = %d, want 0", got)
 	}
 }
 
