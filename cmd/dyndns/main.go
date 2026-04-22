@@ -146,7 +146,7 @@ func main() {
 					"MTProto binding ready for %s (fp=%s)\n%s",
 					b.FQDN, b.Fingerprint(), b.TelegramURL(),
 				)
-				bot.PostURLMessage(ctx, text)
+				bot.Post(ctx, "binding:"+b.FQDN, text)
 			}
 		}
 	}
@@ -216,7 +216,10 @@ type telegramHandlers struct {
 	cfg     *config.Config
 	runtime *mtproto.Runtime
 	store   *mtproto.Store
-	notify  func(ctx context.Context, text string)
+	// post posts a rotation notification through the bot's dedup-aware
+	// path. The caller supplies a "kind" so repeat posts about the same
+	// binding collapse into one live chat message.
+	post func(ctx context.Context, kind, text string)
 }
 
 func (h *telegramHandlers) Status() []telegram.Binding {
@@ -266,10 +269,13 @@ func (h *telegramHandlers) Rotate(subdomain string) (telegram.Binding, error) {
 }
 
 func (h *telegramHandlers) NotifyRotated(b telegram.Binding) {
-	if h.notify == nil {
+	if h.post == nil {
 		return
 	}
-	h.notify(context.Background(), fmt.Sprintf(
+	// Same kind as the startup binding announcement — the rotation message
+	// overwrites the prior URL post for this FQDN instead of stacking a new
+	// one on top.
+	h.post(context.Background(), "binding:"+b.FQDN, fmt.Sprintf(
 		"MTProto secret rotated for %s (fp=%s)\n%s",
 		b.FQDN, b.Fingerprint, b.TelegramURL,
 	))
@@ -291,9 +297,10 @@ func newTelegramBot(cfg *config.Config, rt *mtproto.Runtime, store *mtproto.Stor
 	}
 	handlers := &telegramHandlers{cfg: cfg, runtime: rt, store: store}
 	bot := telegram.NewBot(api, handlers, cfg.TelegramBotChatIDs, logger.With("component", "telegram"), cancel, msgStore)
-	// NotifyRotated uses the URL-post path so the rotation message also
-	// replaces the prior one.
-	handlers.notify = bot.PostURLMessage
+	// Wire the rotation callback through the bot's kind-aware Post so that
+	// the rotation notification overwrites the prior binding message rather
+	// than accumulating in the chat.
+	handlers.post = bot.Post
 	return bot, nil
 }
 

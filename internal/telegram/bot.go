@@ -125,31 +125,32 @@ func (b *Bot) Broadcast(ctx context.Context, text string) {
 	}
 }
 
-// PostURLMessage is like Broadcast, but ensures only one "current URL" post
-// exists per chat: it deletes the previously-posted message for that chat
-// before sending the new one. The new message_id is persisted to the
-// MessageStore so this survives service restarts (secret rotation path).
+// Post is like Broadcast, but deduplicates per (chat, kind): the prior
+// message with the same kind is deleted before sending the new one. The
+// caller chooses the kind — e.g. "binding:zone451.example.com" — so messages
+// about different bindings coexist while repeat posts about the SAME
+// binding fold into a single live message.
 //
-// When no MessageStore is configured, the behavior is identical to Broadcast.
-func (b *Bot) PostURLMessage(ctx context.Context, text string) {
-	if b.messages == nil {
+// When no MessageStore is configured, the behavior degrades to Broadcast.
+func (b *Bot) Post(ctx context.Context, kind, text string) {
+	if b.messages == nil || kind == "" {
 		b.Broadcast(ctx, text)
 		return
 	}
 	for _, chatID := range b.notifyChats {
-		if prior := b.messages.Get(chatID); prior != 0 {
+		if prior := b.messages.Get(chatID, kind); prior != 0 {
 			if err := b.api.DeleteMessage(ctx, chatID, prior); err != nil {
 				// Deletion is best-effort — the message may already be gone.
-				b.log.Debug("telegram deleteMessage failed (proceeding)", "chat_id", chatID, "message_id", prior, "error", err)
+				b.log.Debug("telegram deleteMessage failed (proceeding)", "chat_id", chatID, "kind", kind, "message_id", prior, "error", err)
 			}
 		}
 		msgID, err := b.api.SendMessage(ctx, chatID, text)
 		if err != nil {
-			b.log.Warn("telegram PostURLMessage send failed", "chat_id", chatID, "error", err)
+			b.log.Warn("telegram Post send failed", "chat_id", chatID, "kind", kind, "error", err)
 			continue
 		}
-		if err := b.messages.Set(chatID, msgID); err != nil {
-			b.log.Warn("telegram message store write failed", "chat_id", chatID, "message_id", msgID, "error", err)
+		if err := b.messages.Set(chatID, kind, msgID); err != nil {
+			b.log.Warn("telegram message store write failed", "chat_id", chatID, "kind", kind, "message_id", msgID, "error", err)
 		}
 	}
 }

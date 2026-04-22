@@ -239,7 +239,7 @@ func TestParseCommand(t *testing.T) {
 	}
 }
 
-func TestPostURLMessage_DeletesPriorAndRecordsNew(t *testing.T) {
+func TestPost_DeletesPriorAndRecordsNewPerKind(t *testing.T) {
 	api := &fakeAPI{}
 	handlers := &fakeHandlers{}
 	store, err := NewMessageStore(t.TempDir() + "/last.json")
@@ -248,47 +248,48 @@ func TestPostURLMessage_DeletesPriorAndRecordsNew(t *testing.T) {
 	}
 	b := NewBot(api, handlers, []int64{100, 200}, nil, nil, store)
 
-	// First post: nothing to delete.
-	b.PostURLMessage(context.Background(), "first")
-	if len(api.sent) != 2 {
-		t.Fatalf("expected 2 sends, got %d", len(api.sent))
+	// First post of kind "binding:a": nothing to delete.
+	b.Post(context.Background(), "binding:a", "A first")
+	if len(api.sent) != 2 || len(api.deleted) != 0 {
+		t.Fatalf("first post: sent=%d deleted=%d", len(api.sent), len(api.deleted))
 	}
+	firstA100 := api.sent[0].MessageID
+	firstA200 := api.sent[1].MessageID
+
+	// Post of a DIFFERENT kind must NOT delete the "a" messages.
+	b.Post(context.Background(), "binding:b", "B first")
 	if len(api.deleted) != 0 {
-		t.Fatalf("expected 0 deletes on first post, got %d", len(api.deleted))
-	}
-	if got := store.Get(100); got != api.sent[0].MessageID {
-		t.Errorf("store[100] = %d, want %d", got, api.sent[0].MessageID)
-	}
-	if got := store.Get(200); got != api.sent[1].MessageID {
-		t.Errorf("store[200] = %d, want %d", got, api.sent[1].MessageID)
+		t.Fatalf("different kind should not delete prior: %+v", api.deleted)
 	}
 
-	firstForChat100 := api.sent[0].MessageID
-	firstForChat200 := api.sent[1].MessageID
-
-	// Second post: prior message IDs should be deleted, store updates.
-	b.PostURLMessage(context.Background(), "second")
+	// Second post of kind "binding:a": should delete ONLY the "a" messages.
+	b.Post(context.Background(), "binding:a", "A second")
 	if len(api.deleted) != 2 {
-		t.Fatalf("expected 2 deletes on second post, got %d: %+v", len(api.deleted), api.deleted)
+		t.Fatalf("expected 2 deletes, got %d: %+v", len(api.deleted), api.deleted)
 	}
-	if api.deleted[0].ChatID != 100 || api.deleted[0].MessageID != firstForChat100 {
-		t.Errorf("first delete wrong: %+v, want chat=100 msg=%d", api.deleted[0], firstForChat100)
+	if api.deleted[0].ChatID != 100 || api.deleted[0].MessageID != firstA100 {
+		t.Errorf("first delete wrong: %+v", api.deleted[0])
 	}
-	if api.deleted[1].ChatID != 200 || api.deleted[1].MessageID != firstForChat200 {
-		t.Errorf("second delete wrong: %+v, want chat=200 msg=%d", api.deleted[1], firstForChat200)
+	if api.deleted[1].ChatID != 200 || api.deleted[1].MessageID != firstA200 {
+		t.Errorf("second delete wrong: %+v", api.deleted[1])
 	}
-	if store.Get(100) != api.sent[2].MessageID {
-		t.Errorf("store[100] not updated after second post")
+	// Store for kind "binding:a" must reflect the newest IDs.
+	if got := store.Get(100, "binding:a"); got != api.sent[len(api.sent)-2].MessageID {
+		t.Errorf("store[100,a] = %d, want %d", got, api.sent[len(api.sent)-2].MessageID)
+	}
+	// Kind "binding:b" must be untouched.
+	if got := store.Get(100, "binding:b"); got == 0 {
+		t.Errorf("kind b must still be tracked")
 	}
 }
 
-func TestPostURLMessage_FallsBackToBroadcastWithoutStore(t *testing.T) {
+func TestPost_FallsBackToBroadcastWithoutStore(t *testing.T) {
 	api := &fakeAPI{}
 	handlers := &fakeHandlers{}
 	b := NewBot(api, handlers, []int64{42}, nil, nil, nil)
 
-	b.PostURLMessage(context.Background(), "first")
-	b.PostURLMessage(context.Background(), "second")
+	b.Post(context.Background(), "binding:a", "first")
+	b.Post(context.Background(), "binding:a", "second")
 
 	if len(api.deleted) != 0 {
 		t.Errorf("expected no deletes without a store, got %d", len(api.deleted))
@@ -304,10 +305,13 @@ func TestMessageStore_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMessageStore: %v", err)
 	}
-	if err := s.Set(42, 1001); err != nil {
+	if err := s.Set(42, "binding:a", 1001); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
-	if err := s.Set(-100, 5); err != nil {
+	if err := s.Set(42, "binding:b", 1002); err != nil {
+		t.Fatalf("Set b: %v", err)
+	}
+	if err := s.Set(-100, "rotation", 5); err != nil {
 		t.Fatalf("Set negative: %v", err)
 	}
 
@@ -316,18 +320,27 @@ func TestMessageStore_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if got := s2.Get(42); got != 1001 {
-		t.Errorf("Get(42) = %d, want 1001", got)
+	if got := s2.Get(42, "binding:a"); got != 1001 {
+		t.Errorf("Get(42,a) = %d, want 1001", got)
 	}
-	if got := s2.Get(-100); got != 5 {
-		t.Errorf("Get(-100) = %d, want 5", got)
+	if got := s2.Get(42, "binding:b"); got != 1002 {
+		t.Errorf("Get(42,b) = %d, want 1002", got)
+	}
+	if got := s2.Get(-100, "rotation"); got != 5 {
+		t.Errorf("Get(-100,rotation) = %d, want 5", got)
+	}
+	if got := s2.Get(42, "unknown-kind"); got != 0 {
+		t.Errorf("Get for unknown kind should be 0, got %d", got)
 	}
 
-	if err := s2.Clear(42); err != nil {
+	if err := s2.Clear(42, "binding:a"); err != nil {
 		t.Fatalf("Clear: %v", err)
 	}
-	if got := s2.Get(42); got != 0 {
-		t.Errorf("Get(42) after Clear = %d, want 0", got)
+	if got := s2.Get(42, "binding:a"); got != 0 {
+		t.Errorf("Get(42,a) after Clear = %d, want 0", got)
+	}
+	if got := s2.Get(42, "binding:b"); got != 1002 {
+		t.Errorf("Clear(a) must not affect b: got %d", got)
 	}
 }
 
