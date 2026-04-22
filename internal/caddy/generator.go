@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
+	"strconv"
 	"sync"
 	"text/template"
 
@@ -41,6 +43,19 @@ type TemplateData struct {
 	CatchallFQDN  string
 	ProxyMappings []MappingData // Subdomains routed via the CF-proxy+mTLS block
 	DirectMappings []MappingData // Subdomains served directly (own LE cert, no mTLS)
+	// MTProtoSites lists the MTProto-bound subdomain FQDNs. Each is emitted
+	// as an explicit direct-mode site that responds "OK" 200 — the decoy
+	// web endpoint for browser traffic, while the MTProto dispatcher above
+	// Caddy routes FakeTLS handshakes to mtglib.
+	MTProtoSites []string
+	// HTTPSPort overrides the Caddy HTTPS listener port. 0 means "default
+	// (443)". Set when the MTProto dispatcher binds :443 and Caddy moves
+	// to a loopback port.
+	HTTPSPort int
+	// LoopbackOnly, when true, emits default_bind 127.0.0.1 in the globals
+	// so the Caddy listener is not reachable externally. Paired with a
+	// non-zero HTTPSPort.
+	LoopbackOnly bool
 	// Mappings is kept for legacy template/test use: it is the concatenation of
 	// ProxyMappings followed by DirectMappings.
 	Mappings []MappingData
@@ -162,6 +177,9 @@ func (g *Generator) GenerateContent() (string, error) {
 		CatchallFQDN:    g.catchallFQDN(),
 		ProxyMappings:   proxyMappings,
 		DirectMappings:  directMappings,
+		MTProtoSites:    g.mtprotoFQDNs(),
+		HTTPSPort:       g.httpsPort(),
+		LoopbackOnly:    g.cfg.MTProtoDispatcher,
 		Mappings:        mappingData,
 	}
 
@@ -189,8 +207,42 @@ func (g *Generator) GetTemplateData() TemplateData {
 		CatchallFQDN:    g.catchallFQDN(),
 		ProxyMappings:   proxy,
 		DirectMappings:  direct,
+		MTProtoSites:    g.mtprotoFQDNs(),
+		HTTPSPort:       g.httpsPort(),
+		LoopbackOnly:    g.cfg.MTProtoDispatcher,
 		Mappings:        mappings,
 	}
+}
+
+// mtprotoFQDNs resolves configured MTProtoSubdomains to full hostnames.
+func (g *Generator) mtprotoFQDNs() []string {
+	if len(g.cfg.MTProtoSubdomains) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(g.cfg.MTProtoSubdomains))
+	for _, sub := range g.cfg.MTProtoSubdomains {
+		out = append(out, g.cfg.GetSubdomainFQDN(sub))
+	}
+	return out
+}
+
+// httpsPort derives the Caddy HTTPS listener port. When the MTProto
+// dispatcher is enabled, Caddy moves off :443 to the configured loopback
+// port (default :8443). Otherwise this returns 0 so the template omits the
+// override and Caddy uses its default of 443.
+func (g *Generator) httpsPort() int {
+	if !g.cfg.MTProtoDispatcher {
+		return 0
+	}
+	_, portStr, err := net.SplitHostPort(g.cfg.MTProtoCaddyLoopback)
+	if err != nil {
+		return 0
+	}
+	p, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return p
 }
 
 // splitMappings separates a flat mapping list into proxy-mode and direct-mode
@@ -241,17 +293,33 @@ func (g *Generator) GetActiveSubdomains() []string {
 		}
 	}
 
+	// From MTProto-bound subdomains — these need grey-cloud DNS records so
+	// Caddy can issue LE certs via DNS-01 and the dispatcher can target them
+	// directly.
+	for _, sub := range g.cfg.MTProtoSubdomains {
+		if !seen[sub] {
+			seen[sub] = true
+			result = append(result, sub)
+		}
+	}
+
 	return result
 }
 
 // IsSubdomainDirect returns true when the given subdomain was discovered with
-// the direct-mode flag set. Unknown subdomains (including YAML mappings) return
-// false. Callers that need the catchall treated as direct should check
-// separately via CatchallSubdomain.
+// the direct-mode flag set, or is an MTProto-bound subdomain (which is always
+// grey-cloud). Unknown subdomains (including YAML mappings) return false.
+// Callers that need the catchall treated as direct should check separately
+// via CatchallSubdomain.
 func (g *Generator) IsSubdomainDirect(subdomain string) bool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
+	for _, sub := range g.cfg.MTProtoSubdomains {
+		if sub == subdomain {
+			return true
+		}
+	}
 	for _, svc := range g.discoveredServices {
 		if svc.Subdomain == subdomain {
 			return svc.Direct

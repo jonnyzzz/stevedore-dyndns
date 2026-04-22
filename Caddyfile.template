@@ -20,6 +20,15 @@
     # Let's Encrypt cert so the TLS handshake succeeds and we can answer 451.
     default_sni {{.CatchallFQDN}}
 {{end}}
+{{if .HTTPSPort}}
+    # MTProto dispatcher owns :443; Caddy moves to a loopback port.
+    https_port {{.HTTPSPort}}
+{{end}}
+{{if .LoopbackOnly}}
+    # Constrain the HTTPS listener to loopback so the dispatcher is the
+    # only public-facing :443.
+    default_bind 127.0.0.1
+{{end}}
 }
 
 # Certificate configuration
@@ -119,6 +128,23 @@
         header_up X-Forwarded-Proto {scheme}
         header_up X-Forwarded-Host {host}
     }
+}
+{{end}}
+
+{{range .MTProtoSites}}
+# MTProto-bound subdomain: browser traffic receives "OK" 200 while the
+# MTProto dispatcher upstream routes FakeTLS clients to Telegram.
+{{.}} {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+
+    log {
+        output stdout
+        format json
+    }
+
+    respond "OK" 200
 }
 {{end}}
 

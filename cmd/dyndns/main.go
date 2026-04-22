@@ -17,6 +17,8 @@ import (
 	"github.com/jonnyzzz/stevedore-dyndns/internal/discovery"
 	"github.com/jonnyzzz/stevedore-dyndns/internal/ipdetect"
 	"github.com/jonnyzzz/stevedore-dyndns/internal/mapping"
+	"github.com/jonnyzzz/stevedore-dyndns/internal/mtproto"
+	"github.com/jonnyzzz/stevedore-dyndns/internal/telegram"
 )
 
 // Build-time variables injected via ldflags
@@ -108,11 +110,46 @@ func main() {
 		slog.Info("Discovery mode enabled", "socket", cfg.StevedoreSocket)
 	}
 
+	// MTProto dispatcher (optional) — binds :443 and forwards non-MTProto
+	// traffic to Caddy on the configured loopback port.
+	var mtprotoRuntime *mtproto.Runtime
+	var mtprotoStore *mtproto.Store
+	if cfg.MTProtoDispatcher {
+		rt, store, err := startMTProtoDispatcher(ctx, cfg, logger)
+		if err != nil {
+			slog.Error("Failed to start MTProto dispatcher", "error", err)
+			os.Exit(1)
+		}
+		mtprotoRuntime = rt
+		mtprotoStore = store
+		logMTProtoBindings(rt, cfg)
+	}
+
+	// Telegram bot (optional). Runs in its own goroutine; broadcasts the
+	// generated bindings on startup so the admin has an easy copy path.
+	if cfg.TelegramBotToken != "" {
+		bot := newTelegramBot(cfg, mtprotoRuntime, mtprotoStore, logger, cancel)
+		go func() {
+			if err := bot.Run(ctx); err != nil {
+				slog.Error("Telegram bot exited with error", "error", err)
+			}
+		}()
+		if mtprotoRuntime != nil {
+			for _, b := range mtprotoRuntime.Bindings() {
+				text := fmt.Sprintf(
+					"MTProto binding ready for %s (fp=%s)\n%s",
+					b.FQDN, b.Fingerprint(), b.TelegramURL(),
+				)
+				bot.Broadcast(ctx, text)
+			}
+		}
+	}
+
 	// Start the main control loop
 	go runControlLoop(ctx, cfg, detector, cfClient, caddyGen, mappingMgr, discoveryClient)
 
 	// Start HTTP status server
-	go runStatusServer(ctx, cfg, detector, cfClient)
+	go runStatusServer(ctx, cfg, detector, cfClient, mtprotoRuntime)
 
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
@@ -121,8 +158,139 @@ func main() {
 
 	slog.Info("Shutting down...")
 	cancel()
+	if mtprotoRuntime != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = mtprotoRuntime.Shutdown(shutdownCtx)
+		shutdownCancel()
+	}
 	time.Sleep(time.Second) // Grace period
 	slog.Info("Goodbye!")
+}
+
+// startMTProtoDispatcher builds the runtime from config, starts it, and
+// returns the handle for status/Shutdown along with the secret store so
+// the Telegram bot can rotate secrets.
+func startMTProtoDispatcher(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*mtproto.Runtime, *mtproto.Store, error) {
+	if len(cfg.MTProtoSubdomains) == 0 {
+		return nil, nil, fmt.Errorf("MTPROTO_DISPATCHER is true but MTPROTO_SUBDOMAINS is empty")
+	}
+	store, err := mtproto.NewStore(cfg.MTProtoDataDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	bindings := make([]mtproto.SubdomainBinding, 0, len(cfg.MTProtoSubdomains))
+	for _, sub := range cfg.MTProtoSubdomains {
+		bindings = append(bindings, mtproto.SubdomainBinding{
+			Subdomain: sub,
+			FQDN:      cfg.GetSubdomainFQDN(sub),
+		})
+	}
+	rt := mtproto.NewRuntime(mtproto.RuntimeConfig{
+		Bindings: bindings,
+		Store:    store,
+		Dispatcher: mtproto.DispatcherConfig{
+			Listen:           cfg.MTProtoDispatcherBind,
+			Loopback:         cfg.MTProtoCaddyLoopback,
+			MaxConnections:   cfg.MTProtoMaxConnections,
+			HandshakeTimeout: 10 * time.Second,
+			Logger:           logger.With("component", "mtproto"),
+		},
+		Logger: logger,
+	})
+	if err := rt.Start(ctx); err != nil {
+		return nil, nil, err
+	}
+	return rt, store, nil
+}
+
+// telegramHandlers adapts mtproto.Runtime + mtproto.Store to
+// telegram.Handlers. It provides /status and /rotate semantics to the bot.
+type telegramHandlers struct {
+	cfg     *config.Config
+	runtime *mtproto.Runtime
+	store   *mtproto.Store
+	notify  func(ctx context.Context, text string)
+}
+
+func (h *telegramHandlers) Status() []telegram.Binding {
+	if h.runtime == nil {
+		return nil
+	}
+	src := h.runtime.Bindings()
+	out := make([]telegram.Binding, 0, len(src))
+	for _, b := range src {
+		out = append(out, telegram.Binding{
+			Subdomain:   b.Subdomain,
+			FQDN:        b.FQDN,
+			Fingerprint: b.Fingerprint(),
+			TelegramURL: b.TelegramURL(),
+		})
+	}
+	return out
+}
+
+func (h *telegramHandlers) Rotate(subdomain string) (telegram.Binding, error) {
+	if h.runtime == nil || h.store == nil {
+		return telegram.Binding{}, fmt.Errorf("MTProto dispatcher not running")
+	}
+	fqdn := h.cfg.GetSubdomainFQDN(subdomain)
+	found := false
+	for _, b := range h.runtime.Bindings() {
+		if b.Subdomain == subdomain {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return telegram.Binding{}, fmt.Errorf("no MTProto binding for subdomain %q", subdomain)
+	}
+	b, err := h.store.Rotate(subdomain, fqdn)
+	if err != nil {
+		return telegram.Binding{}, err
+	}
+	return telegram.Binding{
+		Subdomain:   b.Subdomain,
+		FQDN:        b.FQDN,
+		Fingerprint: b.Fingerprint(),
+		TelegramURL: b.TelegramURL(),
+	}, nil
+}
+
+func (h *telegramHandlers) NotifyRotated(b telegram.Binding) {
+	if h.notify == nil {
+		return
+	}
+	h.notify(context.Background(), fmt.Sprintf(
+		"MTProto secret rotated for %s (fp=%s)\n%s",
+		b.FQDN, b.Fingerprint, b.TelegramURL,
+	))
+}
+
+// newTelegramBot constructs the bot with a concrete HTTP API client and an
+// adapter over the MTProto runtime + store. The restart callback cancels
+// the root context so Stevedore can restart dyndns with the new secret.
+func newTelegramBot(cfg *config.Config, rt *mtproto.Runtime, store *mtproto.Store, logger *slog.Logger, cancel context.CancelFunc) *telegram.Bot {
+	api := telegram.NewHTTPAPI(cfg.TelegramBotToken, nil)
+	handlers := &telegramHandlers{cfg: cfg, runtime: rt, store: store}
+	bot := telegram.NewBot(api, handlers, cfg.TelegramBotChatIDs, logger.With("component", "telegram"), cancel)
+	// Wire NotifyRotated through the bot's broadcast surface.
+	handlers.notify = bot.Broadcast
+	return bot
+}
+
+// logMTProtoBindings emits a one-time INFO entry per bound subdomain so the
+// admin can locate the generated secret files. The secret itself is NOT
+// logged — only the file path and a short fingerprint.
+func logMTProtoBindings(rt *mtproto.Runtime, cfg *config.Config) {
+	for _, b := range rt.Bindings() {
+		slog.Info("MTProto binding active",
+			"subdomain", b.Subdomain,
+			"fqdn", b.FQDN,
+			"fingerprint", b.Fingerprint(),
+			"secret_file", cfg.MTProtoDataDir+"/"+b.Subdomain+".secret",
+			"tg_link_file", cfg.MTProtoDataDir+"/"+b.Subdomain+".tg",
+		)
+	}
 }
 
 func runControlLoop(
@@ -405,6 +573,7 @@ func runStatusServer(
 	cfg *config.Config,
 	detector *ipdetect.Detector,
 	cfClient *cloudflare.Client,
+	mtprotoRuntime *mtproto.Runtime,
 ) {
 	mux := http.NewServeMux()
 
@@ -418,7 +587,21 @@ func runStatusServer(
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		ipv4, ipv6, _ := detector.GetLastKnown()
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"ipv4": %q, "ipv6": %q, "domain": %q}`, ipv4, ipv6, cfg.Domain)
+		fmt.Fprintf(w, `{"ipv4": %q, "ipv6": %q, "domain": %q`, ipv4, ipv6, cfg.Domain)
+		if mtprotoRuntime != nil {
+			fmt.Fprint(w, `, "mtproto": [`)
+			first := true
+			for _, b := range mtprotoRuntime.Bindings() {
+				if !first {
+					fmt.Fprint(w, ",")
+				}
+				first = false
+				fmt.Fprintf(w, `{"subdomain":%q,"fqdn":%q,"fingerprint":%q}`,
+					b.Subdomain, b.FQDN, b.Fingerprint())
+			}
+			fmt.Fprint(w, `]`)
+		}
+		fmt.Fprint(w, `}`)
 	})
 
 	server := &http.Server{

@@ -29,6 +29,47 @@ type Config struct {
 	// Leave empty to disable the feature (legacy behavior).
 	CatchallSubdomain string
 
+	// MTProtoDispatcher, when true, runs an MTProto FakeTLS dispatcher on
+	// port 443 in front of Caddy. Caddy is moved to a loopback listener
+	// (see MTProtoCaddyPort). Non-MTProto traffic is forwarded byte-for-byte.
+	MTProtoDispatcher bool
+
+	// MTProtoSubdomains lists the subdomains (relative to Domain/BaseDomain)
+	// that should be bound to MTProto. Each listed subdomain gets:
+	//   * A grey-cloud A/AAAA record (direct mode).
+	//   * A Caddy site block that responds "OK" 200 to browser traffic.
+	//   * A persistent MTProto secret stored under MTProtoDataDir.
+	//   * An mtglib.Proxy instance keyed by SNI inside the dispatcher.
+	// Ignored when MTProtoDispatcher is false.
+	MTProtoSubdomains []string
+
+	// MTProtoDataDir is where generated MTProto secrets are persisted (one
+	// file per subdomain). Defaults to ${DataDir}/mtproto.
+	MTProtoDataDir string
+
+	// MTProtoDispatcherBind is the "host:port" that the MTProto dispatcher
+	// listens on when enabled. Defaults to ":443" (all interfaces).
+	MTProtoDispatcherBind string
+
+	// MTProtoCaddyLoopback is the "host:port" that the dispatcher forwards
+	// non-MTProto traffic to — i.e. where the Caddy HTTPS listener binds
+	// when the dispatcher is enabled. Defaults to "127.0.0.1:8443".
+	MTProtoCaddyLoopback string
+
+	// MTProtoMaxConnections caps the dispatcher's in-flight connection count
+	// across all bound domains. Connections above this limit are closed
+	// immediately. Defaults to 8192.
+	MTProtoMaxConnections int
+
+	// TelegramBotToken is the Bot API token (from BotFather). When non-empty,
+	// the bot runs: long-polls getUpdates, handles /status and /rotate from
+	// allow-listed users in DMs, and pushes notifications to TelegramBotChatIDs.
+	TelegramBotToken string
+
+	// TelegramBotChatIDs lists the chat IDs that receive secret-generation
+	// and rotation notifications. Negative IDs address group/supergroup chats.
+	TelegramBotChatIDs []int64
+
 	// Fritzbox settings for TR-064/UPnP
 	FritzboxHost     string
 	FritzboxUser     string
@@ -93,6 +134,37 @@ func Load() (*Config, error) {
 	// Parse catchall subdomain (optional; enables the 451 catchall site).
 	cfg.CatchallSubdomain = os.Getenv("CATCHALL_SUBDOMAIN")
 
+	// Parse MTProto dispatcher configuration.
+	cfg.MTProtoDispatcher = parseBool(os.Getenv("MTPROTO_DISPATCHER"))
+	cfg.MTProtoSubdomains = parseCommaList(os.Getenv("MTPROTO_SUBDOMAINS"))
+	cfg.MTProtoDataDir = os.Getenv("MTPROTO_DATA_DIR")
+	cfg.MTProtoDispatcherBind = getEnvDefault("MTPROTO_DISPATCHER_BIND", ":443")
+	cfg.MTProtoCaddyLoopback = getEnvDefault("MTPROTO_CADDY_LOOPBACK", "127.0.0.1:8443")
+	if v := os.Getenv("MTPROTO_MAX_CONNECTIONS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid MTPROTO_MAX_CONNECTIONS: %q", v)
+		}
+		cfg.MTProtoMaxConnections = n
+	} else {
+		cfg.MTProtoMaxConnections = 8192
+	}
+
+	// Telegram bot parameters.
+	cfg.TelegramBotToken = os.Getenv("TELEGRAM_BOT_TOKEN")
+	if raw := os.Getenv("TELEGRAM_BOT_CHAT_IDS"); raw != "" {
+		parts := parseCommaList(raw)
+		ids := make([]int64, 0, len(parts))
+		for _, p := range parts {
+			id, err := strconv.ParseInt(p, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid TELEGRAM_BOT_CHAT_IDS entry %q: %w", p, err)
+			}
+			ids = append(ids, id)
+		}
+		cfg.TelegramBotChatIDs = ids
+	}
+
 	// Parse DNS TTL (default to IP check interval in seconds, minimum 60)
 	if ttlStr := os.Getenv("DNS_TTL"); ttlStr != "" {
 		ttl, err := strconv.Atoi(ttlStr)
@@ -130,6 +202,11 @@ func Load() (*Config, error) {
 	}
 
 	cfg.CaddyFile = "/etc/caddy/Caddyfile"
+
+	// Derive MTProto data dir now that DataDir is known.
+	if cfg.MTProtoDataDir == "" {
+		cfg.MTProtoDataDir = cfg.DataDir + "/mtproto"
+	}
 
 	// Validate required fields
 	if err := cfg.Validate(); err != nil {
@@ -214,4 +291,23 @@ func fileExists(path string) bool {
 func parseBool(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
 	return s == "true" || s == "1" || s == "yes" || s == "on"
+}
+
+// parseCommaList splits a comma-separated string, trims whitespace, and
+// drops empty entries. Returns nil for an empty input.
+func parseCommaList(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

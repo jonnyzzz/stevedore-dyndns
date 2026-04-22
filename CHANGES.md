@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2026-04-22
+
+### Added
+- **MTProto FakeTLS Dispatcher (library integration)**: new `internal/mtproto` package embeds `github.com/9seconds/mtg/v2` as a library. When `MTPROTO_DISPATCHER=true`, dyndns binds `:443`, peeks the TLS ClientHello, and for bound SNIs hands the connection to a per-subdomain `mtglib.Proxy`. Non-MTProto traffic is byte-forwarded to Caddy on a loopback port (default `127.0.0.1:8443`). Browser traffic to a bound subdomain reaches Caddy via the domain-fronting path and is served the site's `respond "OK" 200` (no `reverse_proxy`).
+- **Per-subdomain secrets**: subdomains listed in `MTPROTO_SUBDOMAINS` get a 16-byte key auto-generated on first run and persisted under `MTPROTO_DATA_DIR` (default `${DataDir}/mtproto`). `<sub>.secret` holds the hex secret and `<sub>.tg` holds the `tg://proxy?...` import URL (both `0600`).
+- **Caddy global options**: generator now emits `https_port`, `default_bind 127.0.0.1`, and the bound subdomains as dedicated direct-mode sites when the dispatcher is enabled. Existing deployments (dispatcher off) are unchanged.
+- **Telegram bot (optional)**: new `internal/telegram` package. Gated by `TELEGRAM_BOT_TOKEN`; hardcoded user allow-list in `internal/telegram/allowlist.go` (zero placeholder is ignored). Responds to `/status` and `/rotate <subdomain>` in DMs with allow-listed users only; write-only in groups. Broadcasts secret generation / rotation to `TELEGRAM_BOT_CHAT_IDS`. `/rotate` replaces the secret on disk, emits the new `tg://` URL, and cancels the root context so stevedore restarts the service with the fresh secret.
+- **`/status` JSON endpoint**: now includes an `mtproto` array with `{subdomain, fqdn, fingerprint}` for each binding (secret itself is never returned over the endpoint).
+
+### Changed
+- **Go toolchain**: `go.mod` declared version bumped to `1.26` so upstream `github.com/9seconds/mtg/v2` is usable. CI/Dockerfile already use Go 1.26.
+- **`mtglib` adapters**: reuse upstream `network/v2`, `antireplay`, `events`, `ipblocklist`, and write only a thin `slog` logger wrapper — avoids reimplementing five library interfaces.
+
+### Notes
+- The dispatcher enforces its own concurrency gate (`MTPROTO_MAX_CONNECTIONS`, default 8192) because `mtglib.Proxy.ServeConn` bypasses mtg's internal listener-side limiter.
+- The dispatcher closes non-TLS connections rather than forwarding plaintext to Caddy; Caddy's HTTPS listener can't serve raw bytes meaningfully.
+- Allow-list for the bot is compile-time on purpose: a stevedore-param leak cannot grant access.
+
 ## [0.10.0] - 2026-04-22
 
 ### Added
