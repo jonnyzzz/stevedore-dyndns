@@ -45,13 +45,17 @@ func TestGenerate_DirectModeEmitsOwnSite(t *testing.T) {
 		t.Errorf("direct service not rendered as explicit site block:\n%s", content)
 	}
 
-	// Direct site must NOT contain client_auth (mTLS is proxy-mode only).
+	// Direct site uses "client_auth { mode request }" as a policy differentiator
+	// — NOT require_and_verify, which would force a cert.
 	directBlock := blockAfter(t, content, "directapp-zone.example.com {")
-	if strings.Contains(directBlock, "client_auth") {
-		t.Errorf("direct site block must not require client cert:\n%s", directBlock)
-	}
 	if !strings.Contains(directBlock, "dns cloudflare") {
 		t.Errorf("direct site block must request DNS-01 challenge:\n%s", directBlock)
+	}
+	if strings.Contains(directBlock, "require_and_verify") {
+		t.Errorf("direct site must not enforce mTLS (require_and_verify):\n%s", directBlock)
+	}
+	if !strings.Contains(directBlock, "mode request") {
+		t.Errorf("direct site must carry client_auth mode=request (policy differentiator):\n%s", directBlock)
 	}
 }
 
@@ -112,8 +116,8 @@ func TestGenerate_CatchallSiteAndDefaultSNI(t *testing.T) {
 	if !strings.Contains(catchall, "respond \"451 Unavailable For Legal Reasons\" 451") {
 		t.Errorf("catchall should respond 451:\n%s", catchall)
 	}
-	if strings.Contains(catchall, "client_auth") {
-		t.Errorf("catchall must not require client certificate:\n%s", catchall)
+	if strings.Contains(catchall, "require_and_verify") {
+		t.Errorf("catchall must not enforce mTLS:\n%s", catchall)
 	}
 }
 

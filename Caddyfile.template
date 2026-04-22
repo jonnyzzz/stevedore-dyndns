@@ -39,10 +39,20 @@
 
 # Direct-mode subdomains: served with their own Let's Encrypt cert
 # (DNS-01 via Cloudflare), no origin mTLS.
+#
+# The `client_auth { mode request }` is a deliberate no-op that differentiates
+# these sites' TLS connection policies from the wildcard mTLS policy in the
+# adapted JSON. Without it, the Caddyfile adapter merges all non-mTLS sites
+# into a single empty catch-all policy which is walked AFTER the wildcard's
+# "*.domain" policy, so connections to an explicit direct subdomain still
+# pick up the wildcard's client_auth and fail with "certificate required".
 {{range .DirectMappings}}
 {{.FQDN}} {
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        client_auth {
+            mode request
+        }
     }
 
     log {
@@ -75,9 +85,14 @@
 # MTProto-bound subdomain — browser traffic either reverse-proxies to a
 # claiming stevedore service, or falls back to the informational body while
 # the MTProto dispatcher upstream routes FakeTLS clients to Telegram.
+# See the direct-mode comment above for why `client_auth mode request` is
+# present on a non-mTLS site.
 {{.FQDN}} {
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        client_auth {
+            mode request
+        }
     }
 
     log {
@@ -112,10 +127,14 @@
 
 {{if .CatchallFQDN}}
 # 451 catchall: owns a real LE cert served for unknown SNI via default_sni,
-# and responds 451 for every request that reaches this site.
+# and responds 451 for every request that reaches this site. The client_auth
+# stanza forces a distinct TLS connection policy (see direct-mode comment).
 {{.CatchallFQDN}} {
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        client_auth {
+            mode request
+        }
     }
 
     log {
