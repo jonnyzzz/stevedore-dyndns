@@ -40,8 +40,8 @@ func TestGenerate_MTProtoSiteRespondsOK(t *testing.T) {
 	if strings.Contains(block, "reverse_proxy") {
 		t.Errorf("MTProto site must not contain reverse_proxy when unclaimed:\n%s", block)
 	}
-	if strings.Contains(block, "require_and_verify") {
-		t.Errorf("MTProto site must not enforce mTLS:\n%s", block)
+	if strings.Contains(block, "client_auth") {
+		t.Errorf("MTProto site must not configure client_auth (no browser cert prompts):\n%s", block)
 	}
 
 	// Global options enforce loopback binding and port override.

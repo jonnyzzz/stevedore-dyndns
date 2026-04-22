@@ -45,17 +45,18 @@ func TestGenerate_DirectModeEmitsOwnSite(t *testing.T) {
 		t.Errorf("direct service not rendered as explicit site block:\n%s", content)
 	}
 
-	// Direct site uses "client_auth { mode request }" as a policy differentiator
-	// — NOT require_and_verify, which would force a cert.
+	// Direct site carries `alpn` as a benign TLS-policy differentiator
+	// (forces a distinct Caddy TLS connection policy). Must NOT contain
+	// any client_auth — that would prompt browsers for a client cert.
 	directBlock := blockAfter(t, content, "directapp-zone.example.com {")
 	if !strings.Contains(directBlock, "dns cloudflare") {
 		t.Errorf("direct site block must request DNS-01 challenge:\n%s", directBlock)
 	}
-	if strings.Contains(directBlock, "require_and_verify") {
-		t.Errorf("direct site must not enforce mTLS (require_and_verify):\n%s", directBlock)
+	if strings.Contains(directBlock, "client_auth") {
+		t.Errorf("direct site must not configure client_auth (avoids cert prompts):\n%s", directBlock)
 	}
-	if !strings.Contains(directBlock, "mode request") {
-		t.Errorf("direct site must carry client_auth mode=request (policy differentiator):\n%s", directBlock)
+	if !strings.Contains(directBlock, "alpn ") {
+		t.Errorf("direct site must carry an explicit alpn line (policy differentiator):\n%s", directBlock)
 	}
 }
 
@@ -116,8 +117,8 @@ func TestGenerate_CatchallSiteAndDefaultSNI(t *testing.T) {
 	if !strings.Contains(catchall, "respond \"451 Unavailable For Legal Reasons\" 451") {
 		t.Errorf("catchall should respond 451:\n%s", catchall)
 	}
-	if strings.Contains(catchall, "require_and_verify") {
-		t.Errorf("catchall must not enforce mTLS:\n%s", catchall)
+	if strings.Contains(catchall, "client_auth") {
+		t.Errorf("catchall must not configure client_auth (no browser cert prompts):\n%s", catchall)
 	}
 }
 

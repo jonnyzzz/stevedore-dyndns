@@ -77,10 +77,6 @@ This service acts as an ingress controller for Stevedore-managed services, provi
 | `CATCHALL_SUBDOMAIN` | No | Name of the 451 catchall subdomain (e.g. `catchall`). Enables a dedicated site with its own LE cert, used as `default_sni` so any unknown SNI receives a 451 response instead of a TLS error. Leave empty to disable. |
 | `MTPROTO_DISPATCHER` | No | When `true`, dyndns binds `:443` and runs an MTProto FakeTLS dispatcher; Caddy moves to the configured loopback port. Leave empty/`false` to keep Caddy on `:443` as before. |
 | `MTPROTO_SUBDOMAINS` | No | Comma-separated list of subdomain labels (e.g. `mtp,tg`) bound to MTProto. Each gets a grey-cloud A/AAAA record, its own LE cert, a `respond "OK" 200` decoy site, and an auto-generated secret. |
-| `MTPROTO_DATA_DIR` | No | Where MTProto secrets are persisted (default: `${DYNDNS_DATA}/mtproto`). One `<sub>.secret` and `<sub>.tg` file per binding, mode `0600`. |
-| `MTPROTO_DISPATCHER_BIND` | No | Listen address for the dispatcher (default `:443`). |
-| `MTPROTO_CADDY_LOOPBACK` | No | Where Caddy's HTTPS listener binds when the dispatcher is on (default `127.0.0.1:8443`). |
-| `MTPROTO_MAX_CONNECTIONS` | No | In-flight connection cap across all bound domains (default `8192`). |
 | `TELEGRAM_BOT_TOKEN` | No | Bot API token from BotFather. When set, the bot long-polls `getUpdates`, handles `/status` and `/rotate` from allow-listed users in DMs, and broadcasts secret events to `TELEGRAM_BOT_CHAT_IDS`. Write-only in groups. |
 | `TELEGRAM_BOT_CHAT_IDS` | No | Comma-separated chat IDs for notifications (negative IDs for groups). |
 | `DNS_TTL` | No | DNS record TTL in seconds (default: IP check interval, min 60) |
@@ -202,11 +198,12 @@ SUBDOMAIN_PREFIX=true
 ```bash
 MTPROTO_DISPATCHER=true
 MTPROTO_SUBDOMAINS="mtp.home.example.com"   # comma-separated; FQDN or short label
-# Optional tuning:
-MTPROTO_CADDY_LOOPBACK="127.0.0.1:8443"     # where Caddy is moved to
-MTPROTO_MAX_CONNECTIONS=8192                 # dispatcher's in-flight cap
-MTPROTO_DATA_DIR="/data/mtproto"             # default; holds <sub>.secret/<sub>.tg
 ```
+
+The dispatcher's internal loopback target, max-connections cap, bind
+address, and data directory are all auto-derived and do not need to be
+set by the admin. See `internal/config/config.go` for the escape hatches
+if you really need to override them.
 
 When enabled, dyndns binds port 443 itself and Caddy is relocated to a
 loopback-only port. Each incoming TLS connection has its `ClientHello`

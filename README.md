@@ -86,8 +86,8 @@ the TLS `ClientHello` SNI:
   embedded instance of [9seconds/mtg](https://github.com/9seconds/mtg)
   which performs the FakeTLS handshake; non-MTProto-looking traffic
   falls back to Caddy via mtg's own domain-fronting mechanism.
-- Everything else → raw TCP-splice to Caddy on an internal loopback
-  port (default `127.0.0.1:8443`).
+- Everything else → raw TCP-splice to Caddy on an internal loopback port
+  that dyndns picks automatically.
 
 Each bound subdomain gets an auto-generated 16-byte secret on first run
 plus a `tg://proxy?...` link, both persisted under

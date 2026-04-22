@@ -40,19 +40,21 @@
 # Direct-mode subdomains: served with their own Let's Encrypt cert
 # (DNS-01 via Cloudflare), no origin mTLS.
 #
-# The `client_auth { mode request }` is a deliberate no-op that differentiates
-# these sites' TLS connection policies from the wildcard mTLS policy in the
-# adapted JSON. Without it, the Caddyfile adapter merges all non-mTLS sites
-# into a single empty catch-all policy which is walked AFTER the wildcard's
-# "*.domain" policy, so connections to an explicit direct subdomain still
-# pick up the wildcard's client_auth and fail with "certificate required".
+# The explicit `alpn h2 http/1.1` is a benign TLS-layer differentiator that
+# forces the Caddyfile adapter to emit a distinct TLS connection policy per
+# non-mTLS site (with each site's SNI in the match list). Without a
+# differentiator, the adapter merges all non-mTLS sites into a single empty
+# catch-all policy that loses the SNI-match walk to the wildcard "*.domain"
+# block's mTLS policy — explicit direct subdomains would then pick up the
+# wildcard's client_auth and fail handshake with "certificate required".
+# We deliberately avoid any `client_auth` option here because TLS 1.3's
+# CertificateRequest message would surface a "choose a certificate" prompt
+# in user agents that auto-offer personal client certs from the OS keyring.
 {{range .DirectMappings}}
 {{.FQDN}} {
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-        client_auth {
-            mode request
-        }
+        alpn h2 http/1.1
     }
 
     log {
@@ -85,14 +87,12 @@
 # MTProto-bound subdomain — browser traffic either reverse-proxies to a
 # claiming stevedore service, or falls back to the informational body while
 # the MTProto dispatcher upstream routes FakeTLS clients to Telegram.
-# See the direct-mode comment above for why `client_auth mode request` is
-# present on a non-mTLS site.
+# `alpn` differentiates the TLS connection policy — see the direct-mode
+# comment above for why.
 {{.FQDN}} {
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-        client_auth {
-            mode request
-        }
+        alpn h2 http/1.1
     }
 
     log {
@@ -127,14 +127,12 @@
 
 {{if .CatchallFQDN}}
 # 451 catchall: owns a real LE cert served for unknown SNI via default_sni,
-# and responds 451 for every request that reaches this site. The client_auth
-# stanza forces a distinct TLS connection policy (see direct-mode comment).
+# and responds 451 for every request that reaches this site. `alpn` forces
+# a distinct TLS connection policy (see direct-mode comment above).
 {{.CatchallFQDN}} {
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-        client_auth {
-            mode request
-        }
+        alpn h2 http/1.1
     }
 
     log {
