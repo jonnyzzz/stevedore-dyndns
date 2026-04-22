@@ -132,9 +132,10 @@
 {{end}}
 
 {{range .MTProtoSites}}
-# MTProto-bound subdomain: browser traffic receives "OK" 200 while the
-# MTProto dispatcher upstream routes FakeTLS clients to Telegram.
-{{.}} {
+# MTProto-bound subdomain — browser traffic either reverse-proxies to a
+# claiming stevedore service, or falls back to the informational body while
+# the MTProto dispatcher upstream routes FakeTLS clients to Telegram.
+{{.FQDN}} {
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
     }
@@ -144,7 +145,28 @@
         format json
     }
 
-    respond "OK" 200
+{{if .HasBackend}}
+    reverse_proxy {{.Target}} {
+        {{if .Options.Websocket}}
+        transport http {
+            versions 1.1
+        }
+        {{end}}
+        {{if not .Options.BufferRequests}}
+        flush_interval -1
+        {{end}}
+        health_uri {{.Options.HealthPath | default "/health"}}
+        health_interval 30s
+        health_timeout 5s
+
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+    }
+{{else}}
+    respond "{{.FallbackBody}}" 200
+{{end}}
 }
 {{end}}
 

@@ -380,14 +380,14 @@ func (c *Client) IsManagedRecord(fqdn string) bool {
 	}
 
 	// Prefix mode: record matches pattern {subdomain}-{zone}.{parent}
-	// e.g., app-home.jonnyzzz.com when domain is home.jonnyzzz.com
+	// e.g., app-home.example.com when domain is home.example.com
 	if baseDomain != "" && baseDomain != domain {
 		// Extract zone part from domain (first part before the dot)
 		parts := strings.SplitN(domain, ".", 2)
 		if len(parts) >= 1 {
-			zonePart := parts[0] // e.g., "home" from "home.jonnyzzz.com"
+			zonePart := parts[0] // e.g., "home" from "home.example.com"
 			// Check if record ends with -{zone}.{baseDomain}
-			suffix := "-" + zonePart + "." + baseDomain // e.g., "-home.jonnyzzz.com"
+			suffix := "-" + zonePart + "." + baseDomain // e.g., "-home.example.com"
 			if strings.HasSuffix(fqdn, suffix) {
 				// Ensure there's a subdomain part before the suffix
 				prefix := strings.TrimSuffix(fqdn, suffix)
@@ -424,7 +424,7 @@ func (c *Client) GetManagedSubdomainRecords(ctx context.Context) ([]string, erro
 		if strings.HasSuffix(fqdn, "."+domain) {
 			subdomain = strings.TrimSuffix(fqdn, "."+domain)
 		} else if baseDomain != "" && baseDomain != domain {
-			// Try prefix mode extraction: app-home.jonnyzzz.com -> app
+			// Try prefix mode extraction: app-home.example.com -> app
 			parts := strings.SplitN(domain, ".", 2)
 			if len(parts) >= 1 {
 				zonePart := parts[0]

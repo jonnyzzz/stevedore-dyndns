@@ -43,11 +43,11 @@ type TemplateData struct {
 	CatchallFQDN  string
 	ProxyMappings []MappingData // Subdomains routed via the CF-proxy+mTLS block
 	DirectMappings []MappingData // Subdomains served directly (own LE cert, no mTLS)
-	// MTProtoSites lists the MTProto-bound subdomain FQDNs. Each is emitted
-	// as an explicit direct-mode site that responds "OK" 200 — the decoy
-	// web endpoint for browser traffic, while the MTProto dispatcher above
-	// Caddy routes FakeTLS handshakes to mtglib.
-	MTProtoSites []string
+	// MTProtoSites lists the MTProto-bound site configs rendered by the
+	// Caddy template. Each site owns its own LE cert (direct-mode) and
+	// either reverse-proxies browser traffic to a registered service or
+	// responds with the fallback body when no service is claimed.
+	MTProtoSites []MTProtoSite
 	// HTTPSPort overrides the Caddy HTTPS listener port. 0 means "default
 	// (443)". Set when the MTProto dispatcher binds :443 and Caddy moves
 	// to a loopback port.
@@ -59,6 +59,19 @@ type TemplateData struct {
 	// Mappings is kept for legacy template/test use: it is the concatenation of
 	// ProxyMappings followed by DirectMappings.
 	Mappings []MappingData
+}
+
+// MTProtoSite describes one MTProto-bound subdomain's browser-facing site.
+// When HasBackend is true, Caddy reverse-proxies browser traffic to the
+// registered service. Otherwise it emits the fallback "OK, it's 451" body
+// so the domain still responds cleanly.
+type MTProtoSite struct {
+	FQDN       string
+	HasBackend bool
+	Target     string
+	Options    mapping.MappingOptions
+	// FallbackBody is the plain-text response used when HasBackend is false.
+	FallbackBody string
 }
 
 // MappingData represents a mapping in the template
@@ -177,7 +190,7 @@ func (g *Generator) GenerateContent() (string, error) {
 		CatchallFQDN:    g.catchallFQDN(),
 		ProxyMappings:   proxyMappings,
 		DirectMappings:  directMappings,
-		MTProtoSites:    g.mtprotoFQDNs(),
+		MTProtoSites:    g.mtprotoSites(),
 		HTTPSPort:       g.httpsPort(),
 		LoopbackOnly:    g.cfg.MTProtoDispatcher,
 		Mappings:        mappingData,
@@ -207,21 +220,64 @@ func (g *Generator) GetTemplateData() TemplateData {
 		CatchallFQDN:    g.catchallFQDN(),
 		ProxyMappings:   proxy,
 		DirectMappings:  direct,
-		MTProtoSites:    g.mtprotoFQDNs(),
+		MTProtoSites:    g.mtprotoSites(),
 		HTTPSPort:       g.httpsPort(),
 		LoopbackOnly:    g.cfg.MTProtoDispatcher,
 		Mappings:        mappings,
 	}
 }
 
-// mtprotoFQDNs resolves configured MTProtoSubdomains to full hostnames.
-func (g *Generator) mtprotoFQDNs() []string {
+// mtprotoSites resolves the configured MTProtoSubdomains into MTProtoSite
+// entries. For each binding we look for a discovered service that claims the
+// same subdomain label or FQDN and, if one is registered, emit a backend
+// target — otherwise fall back to a plain-text response so the domain still
+// answers cleanly to browser probes.
+//
+// Labels AND FQDNs are accepted as match keys, so the user can either register
+// a service under the short label ("zone451") or the full hostname.
+func (g *Generator) mtprotoSites() []MTProtoSite {
 	if len(g.cfg.MTProtoSubdomains) == 0 {
 		return nil
 	}
-	out := make([]string, 0, len(g.cfg.MTProtoSubdomains))
-	for _, sub := range g.cfg.MTProtoSubdomains {
-		out = append(out, g.cfg.GetSubdomainFQDN(sub))
+
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	out := make([]MTProtoSite, 0, len(g.cfg.MTProtoSubdomains))
+	for _, entry := range g.cfg.MTProtoSubdomains {
+		label, fqdn := g.cfg.ResolveMTProtoEntry(entry)
+		site := MTProtoSite{
+			FQDN:         fqdn,
+			FallbackBody: "OK, it's 451",
+		}
+		for _, svc := range g.discoveredServices {
+			if svc.Subdomain == label || svc.Subdomain == fqdn {
+				site.HasBackend = true
+				site.Target = svc.GetTarget()
+				site.Options = mapping.MappingOptions{
+					Websocket:  svc.Websocket,
+					HealthPath: svc.GetHealthPath(),
+				}
+				break
+			}
+		}
+		out = append(out, site)
+	}
+	return out
+}
+
+// mtprotoBoundLabels returns the set of discovered-service subdomain labels
+// (and FQDNs) that have been claimed by an MTProto binding. Used by
+// collectMappings to avoid rendering the same backend twice.
+func (g *Generator) mtprotoBoundLabels() map[string]bool {
+	if len(g.cfg.MTProtoSubdomains) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(g.cfg.MTProtoSubdomains)*2)
+	for _, entry := range g.cfg.MTProtoSubdomains {
+		label, fqdn := g.cfg.ResolveMTProtoEntry(entry)
+		out[label] = true
+		out[fqdn] = true
 	}
 	return out
 }
@@ -328,16 +384,25 @@ func (g *Generator) IsSubdomainDirect(subdomain string) bool {
 	return false
 }
 
-// collectMappings gathers all mappings from both YAML files and discovery
+// collectMappings gathers all mappings from both YAML files and discovery.
+// Services whose subdomain is claimed by an MTProto binding are omitted:
+// those are rendered by the MTProto site block instead, so they'd otherwise
+// appear twice.
 func (g *Generator) collectMappings() []MappingData {
 	seen := make(map[string]bool)
 	var result []MappingData
+
+	mtprotoClaimed := g.mtprotoBoundLabels()
 
 	// First, add discovered services (higher priority)
 	g.mu.RLock()
 	for _, svc := range g.discoveredServices {
 		if seen[svc.Subdomain] {
 			slog.Warn("Duplicate subdomain in discovered services", "subdomain", svc.Subdomain)
+			continue
+		}
+		if mtprotoClaimed[svc.Subdomain] {
+			slog.Debug("Skipping discovered service: claimed by MTProto binding", "subdomain", svc.Subdomain)
 			continue
 		}
 		seen[svc.Subdomain] = true

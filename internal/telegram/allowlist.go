@@ -12,9 +12,8 @@ package telegram
 // Add new IDs by editing this file and redeploying; this is intentionally
 // compile-time, not config, so stevedore-param leaks cannot grant access.
 var AllowedUsers = []int64{
-	// Eugene Petrenko — primary admin.
-	// Replace the placeholder below with your actual Telegram user ID.
-	0,
+	// Eugene Petrenko — primary admin (@jonnyzzz).
+	198430623,
 }
 
 // IsAllowed reports whether the given Telegram user ID is in AllowedUsers.

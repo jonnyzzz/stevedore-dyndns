@@ -179,10 +179,11 @@ func startMTProtoDispatcher(ctx context.Context, cfg *config.Config, logger *slo
 		return nil, nil, err
 	}
 	bindings := make([]mtproto.SubdomainBinding, 0, len(cfg.MTProtoSubdomains))
-	for _, sub := range cfg.MTProtoSubdomains {
+	for _, entry := range cfg.MTProtoSubdomains {
+		label, fqdn := cfg.ResolveMTProtoEntry(entry)
 		bindings = append(bindings, mtproto.SubdomainBinding{
-			Subdomain: sub,
-			FQDN:      cfg.GetSubdomainFQDN(sub),
+			Subdomain: label,
+			FQDN:      fqdn,
 		})
 	}
 	rt := mtproto.NewRuntime(mtproto.RuntimeConfig{
@@ -233,10 +234,12 @@ func (h *telegramHandlers) Rotate(subdomain string) (telegram.Binding, error) {
 	if h.runtime == nil || h.store == nil {
 		return telegram.Binding{}, fmt.Errorf("MTProto dispatcher not running")
 	}
-	fqdn := h.cfg.GetSubdomainFQDN(subdomain)
+	var fqdn string
 	found := false
 	for _, b := range h.runtime.Bindings() {
-		if b.Subdomain == subdomain {
+		if b.Subdomain == subdomain || b.FQDN == subdomain {
+			fqdn = b.FQDN
+			subdomain = b.Subdomain
 			found = true
 			break
 		}

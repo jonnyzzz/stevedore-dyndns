@@ -737,44 +737,44 @@ func TestIsManagedRecord(t *testing.T) {
 		unmanagedFQDNs []string
 	}{
 		{
-			name:       "normal mode - domain home.jonnyzzz.com",
-			domain:     "home.jonnyzzz.com",
-			baseDomain: "home.jonnyzzz.com", // same as domain in normal mode
+			name:       "normal mode - domain home.example.com",
+			domain:     "home.example.com",
+			baseDomain: "home.example.com", // same as domain in normal mode
 			managedFQDNs: []string{
-				"app.home.jonnyzzz.com",
-				"test.home.jonnyzzz.com",
-				"roomtone.home.jonnyzzz.com",
-				"api.v1.home.jonnyzzz.com", // nested subdomain
+				"app.home.example.com",
+				"test.home.example.com",
+				"roomtone.home.example.com",
+				"api.v1.home.example.com", // nested subdomain
 			},
 			unmanagedFQDNs: []string{
-				"home.jonnyzzz.com",       // the domain itself
-				"jonnyzzz.com",            // parent domain
-				"other.jonnyzzz.com",      // sibling subdomain
-				"app-home.jonnyzzz.com",   // prefix-style but we're in normal mode
+				"home.example.com",       // the domain itself
+				"example.com",            // parent domain
+				"other.example.com",      // sibling subdomain
+				"app-home.example.com",   // prefix-style but we're in normal mode
 				"evil.com",                // completely different
-				"fakehome.jonnyzzz.com",   // prefix attack
+				"fakehome.example.com",   // prefix attack
 			},
 		},
 		{
-			name:       "prefix mode - domain home.jonnyzzz.com, baseDomain jonnyzzz.com",
-			domain:     "home.jonnyzzz.com",
-			baseDomain: "jonnyzzz.com",
+			name:       "prefix mode - domain home.example.com, baseDomain example.com",
+			domain:     "home.example.com",
+			baseDomain: "example.com",
 			managedFQDNs: []string{
 				// Normal mode records (subdomains of domain)
-				"app.home.jonnyzzz.com",
-				"test.home.jonnyzzz.com",
+				"app.home.example.com",
+				"test.home.example.com",
 				// Prefix mode records (pattern: {subdomain}-{zone}.{baseDomain})
-				"app-home.jonnyzzz.com",
-				"test-home.jonnyzzz.com",
-				"roomtone-home.jonnyzzz.com",
-				"api-home.jonnyzzz.com",
+				"app-home.example.com",
+				"test-home.example.com",
+				"roomtone-home.example.com",
+				"api-home.example.com",
 			},
 			unmanagedFQDNs: []string{
-				"home.jonnyzzz.com",       // the domain itself
-				"jonnyzzz.com",            // baseDomain itself
-				"other.jonnyzzz.com",      // different subdomain of baseDomain
-				"app-work.jonnyzzz.com",   // different zone
-				"app.jonnyzzz.com",        // not our pattern
+				"home.example.com",       // the domain itself
+				"example.com",            // baseDomain itself
+				"other.example.com",      // different subdomain of baseDomain
+				"app-work.example.com",   // different zone
+				"app.example.com",        // not our pattern
 				"evil.com",                // completely different
 			},
 		},
@@ -850,7 +850,7 @@ func TestIsManagedRecord_CaseInsensitive(t *testing.T) {
 	cfg := &config.Config{
 		CloudflareAPIToken: "test-token",
 		CloudflareZoneID:   "test-zone-id",
-		Domain:             "home.jonnyzzz.com",
+		Domain:             "home.example.com",
 		SubdomainPrefix:    true,
 	}
 
@@ -858,14 +858,14 @@ func TestIsManagedRecord_CaseInsensitive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() unexpected error: %v", err)
 	}
-	client.baseDomain = "jonnyzzz.com"
+	client.baseDomain = "example.com"
 
 	// All these should match
 	caseMixes := []string{
-		"app-home.jonnyzzz.com",
-		"APP-HOME.JONNYZZZ.COM",
-		"App-Home.Jonnyzzz.Com",
-		"APP-home.JONNYZZZ.com",
+		"app-home.example.com",
+		"APP-HOME.EXAMPLE.COM",
+		"App-Home.Example.Com",
+		"APP-home.EXAMPLE.com",
 	}
 
 	for _, fqdn := range caseMixes {
@@ -881,7 +881,7 @@ func TestDNSReconciliation_Integration(t *testing.T) {
 	cfg := &config.Config{
 		CloudflareAPIToken: "test-token",
 		CloudflareZoneID:   "test-zone-id",
-		Domain:             "home.jonnyzzz.com",
+		Domain:             "home.example.com",
 		SubdomainPrefix:    true,
 	}
 
@@ -889,19 +889,19 @@ func TestDNSReconciliation_Integration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() unexpected error: %v", err)
 	}
-	client.baseDomain = "jonnyzzz.com"
+	client.baseDomain = "example.com"
 
 	// Simulate existing records in Cloudflare (would come from GetManagedRecordFQDNs)
 	existingFQDNs := []string{
-		"roomtone-home.jonnyzzz.com",
-		"dyndns-home.jonnyzzz.com",
-		"test-home.jonnyzzz.com", // This one should be deleted (stale)
+		"roomtone-home.example.com",
+		"dyndns-home.example.com",
+		"test-home.example.com", // This one should be deleted (stale)
 	}
 
 	// Simulate active records (from GetActiveSubdomains + GetSubdomainFQDN)
 	activeFQDNs := map[string]bool{
-		"roomtone-home.jonnyzzz.com": true,
-		"dyndns-home.jonnyzzz.com":   true,
+		"roomtone-home.example.com": true,
+		"dyndns-home.example.com":   true,
 		// test-home is NOT in active list - should be deleted
 	}
 
@@ -915,8 +915,8 @@ func TestDNSReconciliation_Integration(t *testing.T) {
 	}
 
 	// Verify we found the stale record
-	if len(staleRecords) != 1 || staleRecords[0] != "test-home.jonnyzzz.com" {
-		t.Errorf("Expected stale records [test-home.jonnyzzz.com], got %v", staleRecords)
+	if len(staleRecords) != 1 || staleRecords[0] != "test-home.example.com" {
+		t.Errorf("Expected stale records [test-home.example.com], got %v", staleRecords)
 	}
 
 	// Verify stale record is managed (would be deleted)

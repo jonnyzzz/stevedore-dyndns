@@ -31,7 +31,7 @@ const (
 type Binding struct {
 	// Subdomain is the label as configured (e.g., "mtp").
 	Subdomain string
-	// FQDN is the fully-qualified hostname (e.g., "mtp.zone33.mcp-server-1.com").
+	// FQDN is the fully-qualified hostname (e.g., "mtp.zone33.example.com").
 	FQDN string
 	// Secret is the mtglib Secret (key + host).
 	Secret mtglib.Secret

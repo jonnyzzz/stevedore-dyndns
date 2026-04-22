@@ -243,10 +243,17 @@ func (c *Config) UseDiscovery() bool {
 	return c.StevedoreToken != ""
 }
 
-// GetSubdomainFQDN returns the full domain name for a subdomain.
+// GetSubdomainFQDN returns the full domain name for a subdomain label.
+// If the argument already contains a dot it is treated as a fully qualified
+// hostname and returned verbatim — this lets MTProto bindings declare
+// sibling zones like zone451.example.com without being mangled by
+// prefix-mode substitution.
 // In prefix mode: subdomain-basedomain.parent.com (e.g., app-zone.example.com)
 // In normal mode: subdomain.domain (e.g., app.zone.example.com)
 func (c *Config) GetSubdomainFQDN(subdomain string) string {
+	if strings.Contains(subdomain, ".") {
+		return subdomain
+	}
 	if c.SubdomainPrefix {
 		// Extract the parent domain (everything after first dot)
 		parts := strings.SplitN(c.Domain, ".", 2)
@@ -258,6 +265,31 @@ func (c *Config) GetSubdomainFQDN(subdomain string) string {
 		return subdomain + "-" + c.Domain
 	}
 	return subdomain + "." + c.Domain
+}
+
+// ResolveMTProtoEntry interprets a single MTPROTO_SUBDOMAINS entry and
+// returns the (label, fqdn) pair used throughout the MTProto subsystem.
+//
+// If the entry contains a dot it is treated as an FQDN verbatim — this lets
+// operators bind hostnames that are siblings of the zone (e.g.
+// zone451.example.com when DOMAIN is zone33.example.com), which
+// prefix-mode substitution would otherwise mangle into zone451-zone33.....
+// The label (used for on-disk filenames, /rotate arguments, fingerprinting)
+// is the leftmost DNS label.
+//
+// If the entry contains no dot it is treated as a short subdomain label and
+// passed through GetSubdomainFQDN — preserving the original behavior for
+// single-label MTPROTO_SUBDOMAINS like "mtp".
+func (c *Config) ResolveMTProtoEntry(entry string) (label, fqdn string) {
+	entry = strings.TrimSpace(entry)
+	if strings.Contains(entry, ".") {
+		label = entry
+		if idx := strings.Index(entry, "."); idx > 0 {
+			label = entry[:idx]
+		}
+		return label, entry
+	}
+	return entry, c.GetSubdomainFQDN(entry)
 }
 
 // GetBaseDomain returns the parent domain for DNS record creation in prefix mode.
