@@ -125,11 +125,10 @@ Setting `TELEGRAM_BOT_TOKEN` enables a minimal bot that:
   `TELEGRAM_BOT_CHAT_IDS` on startup and after rotations; repeat posts
   delete the prior message so the chat stays a single live link per
   binding.
-- Accepts `/status` and `/rotate <subdomain>` commands from admins on
-  the hardcoded allow-list in
-  [`internal/telegram/allowlist.go`](internal/telegram/allowlist.go) —
-  only in private DMs; in groups the bot is write-only (can be added to
-  post updates, never responds to messages).
+- Accepts `/status` and `/rotate <subdomain>` commands from Telegram
+  user IDs listed in `TELEGRAM_BOT_ALLOWED_USERS` — only in private
+  DMs; in groups the bot is write-only (can be added to post updates,
+  never responds to messages).
 
 You do NOT need the bot for the rest of the deployment. The secrets on
 disk and the `/status` JSON endpoint are always available; the bot is
@@ -138,9 +137,9 @@ just an ergonomic channel to retrieve them.
 Enable:
 
 ```bash
-stevedore param set dyndns TELEGRAM_BOT_TOKEN    "<BotFather token>"
-stevedore param set dyndns TELEGRAM_BOT_CHAT_IDS "<your Telegram user id>"
-# Edit internal/telegram/allowlist.go to add your user ID, commit, redeploy.
+stevedore param set dyndns TELEGRAM_BOT_TOKEN         "<BotFather token>"
+stevedore param set dyndns TELEGRAM_BOT_CHAT_IDS      "<chat id>"     # where messages go
+stevedore param set dyndns TELEGRAM_BOT_ALLOWED_USERS "<user id>"     # who may command it
 ```
 
 Retrieve your Telegram user ID by DMing `@userinfobot` first, or by

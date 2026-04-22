@@ -85,13 +85,9 @@ func (h *fakeHandlers) NotifyRotated(b Binding) { h.notify = append(h.notify, b)
 
 func runOnce(t *testing.T, api *fakeAPI, handlers *fakeHandlers, allow []int64) *Bot {
 	t.Helper()
-	allowOverride := AllowedUsers
-	AllowedUsers = allow
-	t.Cleanup(func() { AllowedUsers = allowOverride })
-
 	ctx, cancel := context.WithCancel(context.Background())
 	api.cancel = cancel
-	b := NewBot(api, handlers, []int64{}, nil, nil, nil)
+	b := NewBot(api, handlers, []int64{}, allow, nil, nil, nil)
 	_ = b.Run(ctx) // returns once api cancels ctx after draining updates
 	return b
 }
@@ -177,10 +173,9 @@ func TestBot_Dispatch_RotateCallsHandlerAndNotifies(t *testing.T) {
 			Text: "/rotate mtp",
 		},
 	}}}}
-	AllowedUsers = []int64{42}
 	ctx, cancel := context.WithCancel(context.Background())
 	api.cancel = cancel
-	b := NewBot(api, handlers, nil, nil, func() { restarted++ }, nil)
+	b := NewBot(api, handlers, nil, []int64{42}, nil, func() { restarted++ }, nil)
 	_ = b.Run(ctx)
 
 	if handlers.rotateIn != "mtp" {
@@ -205,10 +200,9 @@ func TestBot_Dispatch_RotateErrorSurfacedToUser(t *testing.T) {
 			Text: "/rotate missing",
 		},
 	}}}}
-	AllowedUsers = []int64{42}
 	ctx, cancel := context.WithCancel(context.Background())
 	api.cancel = cancel
-	b := NewBot(api, handlers, nil, nil, nil, nil)
+	b := NewBot(api, handlers, nil, []int64{42}, nil, nil, nil)
 	_ = b.Run(ctx)
 
 	if len(api.sent) != 1 || !strings.Contains(api.sent[0].Text, "no such subdomain") {
@@ -246,7 +240,7 @@ func TestPost_DeletesPriorAndRecordsNewPerKind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMessageStore: %v", err)
 	}
-	b := NewBot(api, handlers, []int64{100, 200}, nil, nil, store)
+	b := NewBot(api, handlers, []int64{100, 200}, nil, nil, nil, store)
 
 	// First post of kind "binding:a": nothing to delete.
 	b.Post(context.Background(), "binding:a", "A first")
@@ -286,7 +280,7 @@ func TestPost_DeletesPriorAndRecordsNewPerKind(t *testing.T) {
 func TestPost_FallsBackToBroadcastWithoutStore(t *testing.T) {
 	api := &fakeAPI{}
 	handlers := &fakeHandlers{}
-	b := NewBot(api, handlers, []int64{42}, nil, nil, nil)
+	b := NewBot(api, handlers, []int64{42}, nil, nil, nil, nil)
 
 	b.Post(context.Background(), "binding:a", "first")
 	b.Post(context.Background(), "binding:a", "second")
@@ -344,15 +338,21 @@ func TestMessageStore_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestAllowlist_IgnoresZeroPlaceholder(t *testing.T) {
-	AllowedUsers = []int64{0, 42}
-	if IsAllowed(0) {
-		t.Error("zero (placeholder) must not be accepted as user ID")
+func TestBot_IsAllowed(t *testing.T) {
+	b := NewBot(&fakeAPI{}, &fakeHandlers{}, nil, []int64{0, 42}, nil, nil, nil)
+	if b.isAllowed(0) {
+		t.Error("zero must not be accepted as user ID (placeholder guard)")
 	}
-	if !IsAllowed(42) {
-		t.Error("real user 42 must be accepted")
+	if !b.isAllowed(42) {
+		t.Error("configured user 42 must be accepted")
 	}
-	if IsAllowed(7) {
-		t.Error("user 7 must not be accepted")
+	if b.isAllowed(7) {
+		t.Error("unconfigured user 7 must not be accepted")
+	}
+
+	// Empty allow-list rejects every user.
+	empty := NewBot(&fakeAPI{}, &fakeHandlers{}, nil, nil, nil, nil, nil)
+	if empty.isAllowed(42) {
+		t.Error("bot with no allow-list must reject every command sender")
 	}
 }

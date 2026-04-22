@@ -70,6 +70,12 @@ type Config struct {
 	// and rotation notifications. Negative IDs address group/supergroup chats.
 	TelegramBotChatIDs []int64
 
+	// TelegramBotAllowedUsers are the Telegram user IDs permitted to issue
+	// commands (/status, /rotate) in a private chat with the bot. Empty
+	// means no user can run commands; the bot still broadcasts to
+	// TelegramBotChatIDs.
+	TelegramBotAllowedUsers []int64
+
 	// Fritzbox settings for TR-064/UPnP
 	FritzboxHost     string
 	FritzboxUser     string
@@ -152,17 +158,15 @@ func Load() (*Config, error) {
 
 	// Telegram bot parameters.
 	cfg.TelegramBotToken = os.Getenv("TELEGRAM_BOT_TOKEN")
-	if raw := os.Getenv("TELEGRAM_BOT_CHAT_IDS"); raw != "" {
-		parts := parseCommaList(raw)
-		ids := make([]int64, 0, len(parts))
-		for _, p := range parts {
-			id, err := strconv.ParseInt(p, 10, 64)
-			if err != nil {
-				return nil, fmt.Errorf("invalid TELEGRAM_BOT_CHAT_IDS entry %q: %w", p, err)
-			}
-			ids = append(ids, id)
-		}
+	if ids, err := parseInt64List(os.Getenv("TELEGRAM_BOT_CHAT_IDS")); err != nil {
+		return nil, fmt.Errorf("invalid TELEGRAM_BOT_CHAT_IDS: %w", err)
+	} else {
 		cfg.TelegramBotChatIDs = ids
+	}
+	if ids, err := parseInt64List(os.Getenv("TELEGRAM_BOT_ALLOWED_USERS")); err != nil {
+		return nil, fmt.Errorf("invalid TELEGRAM_BOT_ALLOWED_USERS: %w", err)
+	} else {
+		cfg.TelegramBotAllowedUsers = ids
 	}
 
 	// Parse DNS TTL (default to IP check interval in seconds, minimum 60)
@@ -323,6 +327,24 @@ func fileExists(path string) bool {
 func parseBool(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
 	return s == "true" || s == "1" || s == "yes" || s == "on"
+}
+
+// parseInt64List parses a comma-separated list of int64 values. Returns
+// nil for an empty input. Trims whitespace and ignores empty entries.
+func parseInt64List(s string) ([]int64, error) {
+	parts := parseCommaList(s)
+	if len(parts) == 0 {
+		return nil, nil
+	}
+	out := make([]int64, 0, len(parts))
+	for _, p := range parts {
+		n, err := strconv.ParseInt(p, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("entry %q: %w", p, err)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 // parseCommaList splits a comma-separated string, trims whitespace, and

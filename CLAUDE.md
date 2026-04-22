@@ -79,6 +79,7 @@ This service acts as an ingress controller for Stevedore-managed services, provi
 | `MTPROTO_SUBDOMAINS` | No | Comma-separated list of subdomain labels (e.g. `mtp,tg`) bound to MTProto. Each gets a grey-cloud A/AAAA record, its own LE cert, a `respond "OK" 200` decoy site, and an auto-generated secret. |
 | `TELEGRAM_BOT_TOKEN` | No | Bot API token from BotFather. When set, the bot long-polls `getUpdates`, handles `/status` and `/rotate` from allow-listed users in DMs, and broadcasts secret events to `TELEGRAM_BOT_CHAT_IDS`. Write-only in groups. |
 | `TELEGRAM_BOT_CHAT_IDS` | No | Comma-separated chat IDs for notifications (negative IDs for groups). |
+| `TELEGRAM_BOT_ALLOWED_USERS` | No | Comma-separated Telegram user IDs permitted to run `/status` and `/rotate` in a DM. Empty means no user may run commands. |
 | `DNS_TTL` | No | DNS record TTL in seconds (default: IP check interval, min 60) |
 | `STEVEDORE_SOCKET` | No | Path to stevedore query socket (default: `/var/run/stevedore/query.sock`) |
 | `STEVEDORE_TOKEN` | No | Auth token for service discovery (get via `stevedore token get dyndns`) |
@@ -257,8 +258,8 @@ catch-all policy that loses policy-walk precedence to the wildcard
 **Configuration:**
 ```bash
 TELEGRAM_BOT_TOKEN="<token from BotFather>"
-TELEGRAM_BOT_CHAT_IDS="<your Telegram user id or group id>"
-# Add your Telegram user ID to internal/telegram/allowlist.go and redeploy.
+TELEGRAM_BOT_CHAT_IDS="<chat id>"       # where notifications are posted
+TELEGRAM_BOT_ALLOWED_USERS="<user id>"  # who may run /status and /rotate
 ```
 
 When `TELEGRAM_BOT_TOKEN` is non-empty, dyndns launches a small
@@ -274,10 +275,10 @@ long-polling bot that:
   write-only: it never acknowledges or responds to messages, but it can
   be added to a group to receive broadcast notifications there.
 
-**Allow-list** is compile-time, in
-[`internal/telegram/allowlist.go`](internal/telegram/allowlist.go). This
-is deliberate — a stevedore-param leak should not grant command access
-to the bot. Adding a new admin is a code change + redeploy.
+**Allow-list** is configuration-driven via `TELEGRAM_BOT_ALLOWED_USERS`
+(comma-separated Telegram user IDs). An empty list rejects every
+command. Bot notifications still fire regardless of the allow-list;
+only *command processing* is gated.
 
 **Rotating a secret**:
 1. Admin sends `/rotate <subdomain>` to the bot in a DM.

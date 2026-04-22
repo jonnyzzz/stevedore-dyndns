@@ -78,6 +78,7 @@ services:
       # and broadcasts MTProto URL posts to TELEGRAM_BOT_CHAT_IDS.
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_BOT_CHAT_IDS=${TELEGRAM_BOT_CHAT_IDS:-}
+      - TELEGRAM_BOT_ALLOWED_USERS=${TELEGRAM_BOT_ALLOWED_USERS:-}
 
       # Internal paths — must match the container mount points below, not
       # the host paths. DYNDNS_DATA was previously set to ${STEVEDORE_DATA},

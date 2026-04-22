@@ -87,12 +87,16 @@ type Bot struct {
 	handlers   Handlers
 	log        *slog.Logger
 	notifyChats []int64
+	// allowedUsers are the Telegram user IDs permitted to issue commands
+	// in a DM. Configured externally (TELEGRAM_BOT_ALLOWED_USERS); empty
+	// means no command is accepted from any user.
+	allowedUsers []int64
 	// restart, when non-nil, is invoked after a successful /rotate so the
 	// host can signal a clean service restart. The bot does not exit itself.
 	restart func()
 	// messages optionally tracks the "current URL post" per chat so we can
 	// delete the prior one before posting a new one (keeps the chat tidy).
-	// When nil, PostURLMessage degrades to a plain Broadcast.
+	// When nil, Post degrades to a plain Broadcast.
 	messages *MessageStore
 
 	mu     sync.Mutex
@@ -100,19 +104,32 @@ type Bot struct {
 }
 
 // NewBot constructs a bot ready for Run. The restart callback is optional.
-// messages may be nil, in which case PostURLMessage degrades to Broadcast.
-func NewBot(api API, handlers Handlers, notifyChats []int64, log *slog.Logger, restart func(), messages *MessageStore) *Bot {
+// messages may be nil, in which case Post degrades to Broadcast.
+// allowedUsers is the DM-command allow-list; an empty slice rejects every
+// command.
+func NewBot(api API, handlers Handlers, notifyChats, allowedUsers []int64, log *slog.Logger, restart func(), messages *MessageStore) *Bot {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Bot{
-		api:         api,
-		handlers:    handlers,
-		log:         log,
-		notifyChats: append([]int64(nil), notifyChats...),
-		restart:     restart,
-		messages:    messages,
+		api:          api,
+		handlers:     handlers,
+		log:          log,
+		notifyChats:  append([]int64(nil), notifyChats...),
+		allowedUsers: append([]int64(nil), allowedUsers...),
+		restart:      restart,
+		messages:     messages,
 	}
+}
+
+// isAllowed reports whether the given Telegram user ID may run commands.
+func (b *Bot) isAllowed(userID int64) bool {
+	for _, id := range b.allowedUsers {
+		if id != 0 && id == userID {
+			return true
+		}
+	}
+	return false
 }
 
 // Broadcast sends text to each notification chat. Errors per chat are logged
@@ -203,7 +220,7 @@ func (b *Bot) dispatch(ctx context.Context, u Update) {
 		return
 	}
 	// Enforce allow-list. Anonymous / rejected users see nothing.
-	if !IsAllowed(u.Message.From.ID) {
+	if !b.isAllowed(u.Message.From.ID) {
 		b.log.Info("ignoring non-allow-listed user",
 			"user_id", u.Message.From.ID,
 			"username", u.Message.From.Username)

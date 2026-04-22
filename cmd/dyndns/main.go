@@ -296,7 +296,15 @@ func newTelegramBot(cfg *config.Config, rt *mtproto.Runtime, store *mtproto.Stor
 		return nil, fmt.Errorf("telegram message store: %w", err)
 	}
 	handlers := &telegramHandlers{cfg: cfg, runtime: rt, store: store}
-	bot := telegram.NewBot(api, handlers, cfg.TelegramBotChatIDs, logger.With("component", "telegram"), cancel, msgStore)
+	bot := telegram.NewBot(
+		api,
+		handlers,
+		cfg.TelegramBotChatIDs,
+		cfg.TelegramBotAllowedUsers,
+		logger.With("component", "telegram"),
+		cancel,
+		msgStore,
+	)
 	// Wire the rotation callback through the bot's kind-aware Post so that
 	// the rotation notification overwrites the prior binding message rather
 	// than accumulating in the chat.
