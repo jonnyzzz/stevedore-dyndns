@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.5] - 2026-01-06
+
+### Added
+- **Access Log Integration Test**: Verifies access logs are emitted to stdout and include request host
+- **Integration Test Runner**: Added Dockerfile.test for cached Docker-based integration runs
+
+### Fixed
+- **Discovery Poll Churn**: Skip Caddy regeneration when the effective service list is unchanged
+- **Config Reload Guard**: Skip Caddy reload when the generated config is identical
+- **Access Log Visibility**: Caddy logs now emit to stdout only (container-native logging)
+
+### Changed
+- **Go Toolchain**: Updated CI and Docker build to use Go 1.25
+
 ## [0.9.4] - 2026-01-06
 
 ### Fixed

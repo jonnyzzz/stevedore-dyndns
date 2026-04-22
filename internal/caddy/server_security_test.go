@@ -46,11 +46,7 @@ func TestHTTPSServerSecurityWithPentestTools(t *testing.T) {
 	}
 
 	// Create temp directory for test artifacts
-	tempDir, err := os.MkdirTemp("", "caddy-pentest-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := tempDir(t, "caddy-pentest-")
 
 	t.Logf("Test artifacts in: %s", tempDir)
 
@@ -110,6 +106,7 @@ func TestHTTPSServerSecurityWithPentestTools(t *testing.T) {
 	t.Run("Port_Exposure", func(t *testing.T) {
 		result := testPortsWithNmap(t, tempDir, exposedPorts)
 		results = append(results, result)
+		t.Logf("Port_Exposure evidence:\n%s", result.Evidence)
 		if !result.Passed {
 			t.Errorf("Port exposure issue: %s", result.Description)
 		}
@@ -324,9 +321,9 @@ func waitForServer(ctx context.Context, host, port string) error {
 // uses direct container IP connections and is more reliable in CI.
 func testMTLSWithCurl(t *testing.T, certDir, httpsPort string) SecurityTestResult {
 	result := SecurityTestResult{
-		TestName: "mTLS_Enforcement",
-		Severity: "ok",
-		Passed:   true,
+		TestName:    "mTLS_Enforcement",
+		Severity:    "ok",
+		Passed:      true,
 		Description: "mTLS configuration verified (detailed testing in server_integration_test.go)",
 	}
 
@@ -374,7 +371,7 @@ func testMTLSWithCurl_disabled(t *testing.T, certDir, httpsPort string) Security
 	httpResponseReceived := strings.Contains(stderrStr, "HTTP/2") &&
 		(strings.Contains(stderrStr, "< HTTP/2 200") ||
 			strings.Contains(stderrStr, "< HTTP/2 421") || // Misdirected (SNI issue, but TLS worked)
-			strings.Contains(stderrStr, "< HTTP/2 404"))   // Not found is fine too
+			strings.Contains(stderrStr, "< HTTP/2 404")) // Not found is fine too
 
 	if err == nil && strings.Contains(outputStr, "Secure OK") {
 		withCertAccepted = true
@@ -485,47 +482,42 @@ func testTLSWithTestSSL(t *testing.T, certDir, httpsPort string) SecurityTestRes
 	return result
 }
 
-// testPortsWithNmap tests port exposure using nmap
+// testPortsWithNmap verifies that the expected Caddy ports are reachable.
+//
+// Previously this dialed an instrumentisto/nmap container with --network=host;
+// that image is amd64-only and --network=host has unreliable semantics under
+// Docker Desktop on Apple Silicon (qemu), causing the scan to hang indefinitely.
+// A direct TCP dial from the test process exercises the same published ports
+// and matches the assertion ("HTTPS port is open").
 func testPortsWithNmap(t *testing.T, certDir string, exposedPorts map[string]string) SecurityTestResult {
 	result := SecurityTestResult{
 		TestName: "Port_Exposure",
 		Severity: "ok",
 	}
 
-	// For this test, we verify that Caddy is only listening on expected ports
-	// Since we're using Docker port mapping, we test the mapped ports
-
-	outputDir := filepath.Join(certDir, "nmap_output")
-	os.MkdirAll(outputDir, 0755)
-
-	// Scan localhost for all ports in our range
-	cmd := exec.Command("docker", "run", "--rm", "--network=host",
-		"-v", outputDir+":/output",
-		"instrumentisto/nmap",
-		"-sT", "-Pn",
-		"-p", fmt.Sprintf("%s,%s", exposedPorts["8443"], exposedPorts["8080"]),
-		"--reason", "--open",
-		"-oN", "/output/nmap.txt",
-		"127.0.0.1",
-	)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Logf("nmap output: %s", string(output))
+	var evidence strings.Builder
+	httpsOpen := false
+	for name, port := range exposedPorts {
+		addr := net.JoinHostPort("127.0.0.1", port)
+		conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+		if err != nil {
+			fmt.Fprintf(&evidence, "port %s (container :%s): closed (%v)\n", port, name, err)
+			continue
+		}
+		_ = conn.Close()
+		fmt.Fprintf(&evidence, "port %s (container :%s): open\n", port, name)
+		if name == "8443" {
+			httpsOpen = true
+		}
 	}
 
-	// Read nmap results
-	nmapOutput, _ := os.ReadFile(filepath.Join(outputDir, "nmap.txt"))
-	result.Evidence = string(nmapOutput)
-
-	// Verify only expected ports are open
-	nmapStr := string(nmapOutput)
-	if strings.Contains(nmapStr, exposedPorts["8443"]) && strings.Contains(nmapStr, "open") {
+	result.Evidence = evidence.String()
+	if httpsOpen {
 		result.Passed = true
 		result.Description = "Expected ports are open"
 	} else {
 		result.Passed = false
-		result.Description = "Port configuration issue"
+		result.Description = "HTTPS port not reachable"
 	}
 
 	return result

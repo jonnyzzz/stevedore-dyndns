@@ -70,8 +70,13 @@ func (g *Generator) Generate() error {
 	}
 
 	// Write Caddyfile
-	if err := os.WriteFile(g.cfg.CaddyFile, []byte(content), 0644); err != nil {
-		return fmt.Errorf("failed to write Caddyfile: %w", err)
+	changed, err := writeFileIfChanged(g.cfg.CaddyFile, []byte(content))
+	if err != nil {
+		return err
+	}
+	if !changed {
+		slog.Debug("Caddyfile unchanged, skipping reload", "path", g.cfg.CaddyFile, "mappings", len(g.collectMappings()))
+		return nil
 	}
 
 	slog.Info("Generated Caddyfile", "path", g.cfg.CaddyFile, "mappings", len(g.collectMappings()))
@@ -82,6 +87,23 @@ func (g *Generator) Generate() error {
 	}
 
 	return nil
+}
+
+func writeFileIfChanged(path string, content []byte) (bool, error) {
+	existing, err := os.ReadFile(path)
+	if err == nil {
+		if bytes.Equal(existing, content) {
+			return false, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("failed to read Caddyfile: %w", err)
+	}
+
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		return false, fmt.Errorf("failed to write Caddyfile: %w", err)
+	}
+
+	return true, nil
 }
 
 // GenerateContent generates the Caddyfile content as a string without writing to disk.

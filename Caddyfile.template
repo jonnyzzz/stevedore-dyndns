@@ -10,13 +10,10 @@
 
     # HTTP/3 is enabled by default in Caddy 2.6+
 
-    # Logging
+    # Logging (stdout for container logs)
     log {
         level {{.LogLevel}}
-        output file /var/log/dyndns/caddy.log {
-            roll_size 10mb
-            roll_keep 5
-        }
+        output stdout
     }
 }
 
@@ -44,12 +41,9 @@
 {{end}}
     }
 
-    # Access logs (streamed to container stdout via entrypoint)
+    # Access logs (stdout)
     log {
-        output file /var/log/dyndns/caddy-access.log {
-            roll_size 10mb
-            roll_keep 5
-        }
+        output stdout
         format json
     }
 

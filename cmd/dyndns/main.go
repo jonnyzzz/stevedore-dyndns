@@ -135,6 +135,7 @@ func runControlLoop(
 	discoveryClient *discovery.Client,
 ) {
 	// Load initial services/mappings BEFORE IP update (so subdomains are known)
+	var initialServices []discovery.Service
 	if discoveryClient != nil {
 		// Discovery mode: fetch services from stevedore socket
 		services, err := discoveryClient.GetIngressServices(ctx)
@@ -143,6 +144,7 @@ func runControlLoop(
 		} else {
 			slog.Info("Loaded services from discovery", "count", len(services))
 			caddyGen.UpdateDiscoveredServices(services)
+			initialServices = append([]discovery.Service(nil), services...)
 		}
 	} else if mappingMgr != nil {
 		// Legacy mode: load mappings from YAML file
@@ -161,7 +163,7 @@ func runControlLoop(
 
 	// Start service discovery polling or file watching
 	if discoveryClient != nil {
-		go runDiscoveryLoop(ctx, discoveryClient, caddyGen)
+		go runDiscoveryLoop(ctx, discoveryClient, caddyGen, initialServices)
 	} else if mappingMgr != nil {
 		go mappingMgr.Watch(ctx, func() {
 			slog.Info("Mappings changed, regenerating Caddy config")
@@ -186,7 +188,7 @@ func runControlLoop(
 }
 
 // runDiscoveryLoop polls the stevedore socket for service changes
-func runDiscoveryLoop(ctx context.Context, client *discovery.Client, caddyGen *caddy.Generator) {
+func runDiscoveryLoop(ctx context.Context, client *discovery.Client, caddyGen *caddy.Generator, lastServices []discovery.Service) {
 	var since time.Time
 
 	for {
@@ -212,8 +214,13 @@ func runDiscoveryLoop(ctx context.Context, client *discovery.Client, caddyGen *c
 
 		// If services changed (not nil), update and regenerate
 		if services != nil {
+			if discovery.ServicesEqual(services, lastServices) {
+				slog.Debug("Discovery poll returned unchanged services, skipping Caddy reload", "count", len(services))
+				continue
+			}
 			slog.Info("Services changed via discovery", "count", len(services))
 			caddyGen.UpdateDiscoveredServices(services)
+			lastServices = append([]discovery.Service(nil), services...)
 			if err := caddyGen.Generate(); err != nil {
 				slog.Error("Failed to regenerate Caddy config", "error", err)
 			}

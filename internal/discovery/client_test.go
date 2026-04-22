@@ -194,11 +194,22 @@ func TestService_GetHealthPath(t *testing.T) {
 	}
 }
 
+func tempSocketPath(t *testing.T) string {
+	t.Helper()
+
+	tmpDir, err := os.MkdirTemp("/tmp", "dyndns-sock-")
+	if err != nil {
+		return filepath.Join(t.TempDir(), "query.sock")
+	}
+
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	return filepath.Join(tmpDir, "query.sock")
+}
+
 // TestClient_MockServer tests the client against a mock stevedore socket.
 func TestClient_MockServer(t *testing.T) {
 	// Create temp socket
-	tmpDir := t.TempDir()
-	socketPath := filepath.Join(tmpDir, "query.sock")
+	socketPath := tempSocketPath(t)
 
 	// Create mock server
 	listener, err := net.Listen("unix", socketPath)
@@ -357,8 +368,7 @@ func TestClient_SocketNotExists(t *testing.T) {
 // changed=true without a services payload (issue #4).
 func TestClient_PollWithoutServices(t *testing.T) {
 	// Create temp socket
-	tmpDir := t.TempDir()
-	socketPath := filepath.Join(tmpDir, "query.sock")
+	socketPath := tempSocketPath(t)
 
 	// Create mock server
 	listener, err := net.Listen("unix", socketPath)

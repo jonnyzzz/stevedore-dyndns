@@ -42,11 +42,7 @@ func TestHTTPSServerSecurity(t *testing.T) {
 	}
 
 	// Create temp directory for test artifacts
-	tempDir, err := os.MkdirTemp("", "caddy-security-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := tempDir(t, "caddy-security-test-")
 
 	t.Logf("Test artifacts in: %s", tempDir)
 
@@ -68,7 +64,7 @@ func TestHTTPSServerSecurity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	containerID, err := startCaddyContainer(ctx, tempDir, caddyfilePath)
+	containerID, httpsPort, err := startCaddyContainer(ctx, tempDir, caddyfilePath)
 	if err != nil {
 		t.Fatalf("Failed to start Caddy container: %v", err)
 	}
@@ -77,28 +73,24 @@ func TestHTTPSServerSecurity(t *testing.T) {
 	// Wait for Caddy to be ready
 	time.Sleep(3 * time.Second)
 
-	// Get container IP
-	containerIP, err := getContainerIP(containerID)
-	if err != nil {
-		t.Fatalf("Failed to get container IP: %v", err)
-	}
-	t.Logf("Caddy container IP: %s", containerIP)
+	serverAddr := net.JoinHostPort("127.0.0.1", httpsPort)
+	t.Logf("Caddy server address: %s", serverAddr)
 
 	// Run security tests
 	t.Run("mTLS_RejectsConnectionWithoutClientCert", func(t *testing.T) {
-		testMTLSRejectsWithoutClientCert(t, certs, containerIP)
+		testMTLSRejectsWithoutClientCert(t, certs, serverAddr)
 	})
 
 	t.Run("mTLS_AcceptsConnectionWithValidClientCert", func(t *testing.T) {
-		testMTLSAcceptsWithClientCert(t, certs, containerIP)
+		testMTLSAcceptsWithClientCert(t, certs, serverAddr)
 	})
 
 	t.Run("TLS_UsesSecureProtocol", func(t *testing.T) {
-		testTLSSecureProtocol(t, certs, containerIP)
+		testTLSSecureProtocol(t, certs, serverAddr)
 	})
 
 	t.Run("TLS_RejectsInsecureProtocols", func(t *testing.T) {
-		testTLSRejectsInsecureProtocols(t, certs, containerIP)
+		testTLSRejectsInsecureProtocols(t, certs, serverAddr)
 	})
 }
 
@@ -112,11 +104,7 @@ func TestHTTPSServerWithoutMTLS(t *testing.T) {
 		t.Skip("Docker not available, skipping integration test")
 	}
 
-	tempDir, err := os.MkdirTemp("", "caddy-nomtls-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := tempDir(t, "caddy-nomtls-test-")
 
 	certs, err := generateTestCertificates(tempDir)
 	if err != nil {
@@ -133,7 +121,7 @@ func TestHTTPSServerWithoutMTLS(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	containerID, err := startCaddyContainer(ctx, tempDir, caddyfilePath)
+	containerID, httpsPort, err := startCaddyContainer(ctx, tempDir, caddyfilePath)
 	if err != nil {
 		t.Fatalf("Failed to start Caddy container: %v", err)
 	}
@@ -141,16 +129,11 @@ func TestHTTPSServerWithoutMTLS(t *testing.T) {
 
 	time.Sleep(3 * time.Second)
 
-	containerIP, err := getContainerIP(containerID)
-	if err != nil {
-		t.Fatalf("Failed to get container IP: %v", err)
-	}
-
 	t.Run("DirectMode_AcceptsConnectionWithoutClientCert", func(t *testing.T) {
 		// In direct mode (no mTLS), connections without client cert should work
-		// Skip server cert verification since we're testing via Docker IP
+		// Skip server cert verification since we're testing via Docker mapping
 		client := createHTTPClient(certs.caCert, nil, nil, true)
-		resp, err := client.Get(fmt.Sprintf("https://%s:8443/", containerIP))
+		resp, err := client.Get(fmt.Sprintf("https://127.0.0.1:%s/", httpsPort))
 		if err != nil {
 			t.Fatalf("Expected connection to succeed in direct mode, got error: %v", err)
 		}
@@ -340,13 +323,13 @@ func generateTestCaddyfile(certs *testCertificates, enableMTLS bool) string {
 }
 
 // startCaddyContainer starts Caddy in a Docker container
-func startCaddyContainer(ctx context.Context, certDir, caddyfilePath string) (string, error) {
+func startCaddyContainer(ctx context.Context, certDir, caddyfilePath string) (string, string, error) {
 	// Use official Caddy image
 	cmd := exec.CommandContext(ctx, "docker", "run", "-d",
 		"-v", certDir+":/certs:ro",
 		"-v", caddyfilePath+":/etc/caddy/Caddyfile:ro",
-		"-p", "8443",
-		"-p", "8080",
+		"-p", "0:8443",
+		"-p", "0:8080",
 		"caddy:2-alpine",
 		"caddy", "run", "--config", "/etc/caddy/Caddyfile",
 	)
@@ -354,13 +337,18 @@ func startCaddyContainer(ctx context.Context, certDir, caddyfilePath string) (st
 	output, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("docker run failed: %s", string(exitErr.Stderr))
+			return "", "", fmt.Errorf("docker run failed: %s", string(exitErr.Stderr))
 		}
-		return "", fmt.Errorf("docker run failed: %w", err)
+		return "", "", fmt.Errorf("docker run failed: %w", err)
 	}
 
 	containerID := strings.TrimSpace(string(output))
-	return containerID, nil
+	httpsPort, err := getDockerPort(containerID, "8443")
+	if err != nil {
+		stopCaddyContainer(containerID)
+		return "", "", fmt.Errorf("failed to get HTTPS port mapping: %w", err)
+	}
+	return containerID, httpsPort, nil
 }
 
 // stopCaddyContainer stops and removes the container
@@ -369,15 +357,6 @@ func stopCaddyContainer(containerID string) {
 }
 
 // getContainerIP gets the container's IP address
-func getContainerIP(containerID string) (string, error) {
-	cmd := exec.Command("docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerID)
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to get container IP: %w", err)
-	}
-	return strings.TrimSpace(string(output)), nil
-}
-
 // createHTTPClient creates an HTTP client with optional mTLS configuration
 // skipServerVerify skips server cert hostname verification (needed when connecting via Docker IP)
 func createHTTPClient(caCert *x509.Certificate, clientCert *tls.Certificate, tlsConfig *tls.Config, skipServerVerify bool) *http.Client {
@@ -414,12 +393,12 @@ func createHTTPClient(caCert *x509.Certificate, clientCert *tls.Certificate, tls
 }
 
 // testMTLSRejectsWithoutClientCert verifies that connections without client cert are rejected
-func testMTLSRejectsWithoutClientCert(t *testing.T, certs *testCertificates, serverIP string) {
+func testMTLSRejectsWithoutClientCert(t *testing.T, certs *testCertificates, serverAddr string) {
 	// Create client WITHOUT client certificate
-	// Skip server cert verification since we're testing via Docker IP
+	// Skip server cert verification since we're testing via Docker mapping
 	client := createHTTPClient(certs.caCert, nil, nil, true)
 
-	url := fmt.Sprintf("https://%s:8443/", serverIP)
+	url := fmt.Sprintf("https://%s/", serverAddr)
 	_, err := client.Get(url)
 
 	if err == nil {
@@ -437,12 +416,12 @@ func testMTLSRejectsWithoutClientCert(t *testing.T, certs *testCertificates, ser
 }
 
 // testMTLSAcceptsWithClientCert verifies that connections with valid client cert succeed
-func testMTLSAcceptsWithClientCert(t *testing.T, certs *testCertificates, serverIP string) {
+func testMTLSAcceptsWithClientCert(t *testing.T, certs *testCertificates, serverAddr string) {
 	// Create client WITH client certificate
-	// Skip server cert verification since we're testing via Docker IP
+	// Skip server cert verification since we're testing via Docker mapping
 	client := createHTTPClient(certs.caCert, &certs.clientCert, nil, true)
 
-	url := fmt.Sprintf("https://%s:8443/", serverIP)
+	url := fmt.Sprintf("https://%s/", serverAddr)
 	resp, err := client.Get(url)
 
 	if err != nil {
@@ -462,16 +441,16 @@ func testMTLSAcceptsWithClientCert(t *testing.T, certs *testCertificates, server
 }
 
 // testTLSSecureProtocol verifies that TLS 1.2+ is being used
-func testTLSSecureProtocol(t *testing.T, certs *testCertificates, serverIP string) {
+func testTLSSecureProtocol(t *testing.T, certs *testCertificates, serverAddr string) {
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		MaxVersion: tls.VersionTLS13,
 	}
 
-	// Skip server cert verification since we're testing via Docker IP
+	// Skip server cert verification since we're testing via Docker mapping
 	client := createHTTPClient(certs.caCert, &certs.clientCert, tlsConfig, true)
 
-	url := fmt.Sprintf("https://%s:8443/", serverIP)
+	url := fmt.Sprintf("https://%s/", serverAddr)
 	resp, err := client.Get(url)
 
 	if err != nil {
@@ -483,12 +462,12 @@ func testTLSSecureProtocol(t *testing.T, certs *testCertificates, serverIP strin
 }
 
 // testTLSRejectsInsecureProtocols verifies that old TLS versions are rejected
-func testTLSRejectsInsecureProtocols(t *testing.T, certs *testCertificates, serverIP string) {
+func testTLSRejectsInsecureProtocols(t *testing.T, certs *testCertificates, serverAddr string) {
 	// Try to connect with TLS 1.0 only
 	tlsConfig := &tls.Config{
 		MinVersion:         tls.VersionTLS10,
 		MaxVersion:         tls.VersionTLS10,
-		InsecureSkipVerify: true, // Skip server cert verification for Docker IP
+		InsecureSkipVerify: true, // Skip server cert verification for Docker mapping
 	}
 
 	tlsConfig.Certificates = []tls.Certificate{certs.clientCert}
@@ -500,7 +479,7 @@ func testTLSRejectsInsecureProtocols(t *testing.T, certs *testCertificates, serv
 		Timeout: 10 * time.Second,
 	}
 
-	url := fmt.Sprintf("https://%s:8443/", serverIP)
+	url := fmt.Sprintf("https://%s/", serverAddr)
 	_, err := client.Get(url)
 
 	// Caddy by default only allows TLS 1.2+, so this should fail

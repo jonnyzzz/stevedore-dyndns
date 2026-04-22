@@ -36,11 +36,7 @@ func TestWebSocketProxyIntegration(t *testing.T) {
 	}
 
 	// Create temp directory for test artifacts
-	tempDir, err := os.MkdirTemp("", "caddy-websocket-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := tempDir(t, "caddy-websocket-test-")
 
 	t.Logf("Test artifacts in: %s", tempDir)
 
@@ -361,26 +357,4 @@ func createTLSConfigForWebSocket(certs *testCertificates) *tls.Config {
 		InsecureSkipVerify: true, // Skip server cert verification for Docker IP
 		MinVersion:         tls.VersionTLS12,
 	}
-}
-
-func waitForAccessLogEntry(t *testing.T, containerID, needle string, timeout time.Duration) error {
-	t.Helper()
-
-	deadline := time.Now().Add(timeout)
-	var lastLogs string
-
-	for time.Now().Before(deadline) {
-		logs, err := getContainerLogs(containerID)
-		if err == nil {
-			lastLogs = logs
-			if strings.Contains(logs, needle) {
-				return nil
-			}
-		} else {
-			t.Logf("Failed to read container logs: %v", err)
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	return fmt.Errorf("access log entry %q not found within %s\nlogs:\n%s", needle, timeout, lastLogs)
 }

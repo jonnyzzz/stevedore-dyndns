@@ -2,6 +2,25 @@
 
 ## Security Issues
 
+### [x] Caddy access log file stays empty (no access entries)
+**Priority**: High
+**Reported**: 2026-01-06
+**GitHub**: https://github.com/jonnyzzz/stevedore-dyndns/issues/8
+**Fixed**: v0.9.5
+
+The `caddy-access.log` file remained empty in production even though access logs
+were configured and the entrypoint tailed the file to stdout. This made it
+impossible to trace `/ws` upgrades or confirm host routing in logs.
+
+Resolved by sending access logs to stdout directly (no access log file needed).
+
+**Suggested fixes:**
+1. Confirm the site `log` directive is active and emitting access logs.
+2. Ensure the access log includes request host/domain in JSON output.
+3. Add a regression test that hits `/` + `/ws` and asserts log output.
+
+---
+
 ### [x] Bind health check ports to localhost only
 **Priority**: Medium
 **Reported**: 2026-01-06
@@ -46,6 +65,22 @@ access logging is enabled and ensure WebSocket upgrades are logged.
 We need Caddy access logs in `docker logs` output to trace traffic without
 shelling into the container. Add a test, implement log streaming, and verify
 that access logs include `/ws` upgrades.
+
+---
+
+### [x] Stop discovery churn triggering Caddy reload loops
+**Priority**: Medium
+**Reported**: 2026-01-06
+**GitHub**: https://github.com/jonnyzzz/stevedore-dyndns/issues/9
+**Fixed**: v0.9.5
+
+In production, the dyndns container repeatedly regenerates the Caddyfile every
+poll cycle even when services have not changed, leading to frequent reloads.
+
+**Suggested fixes:**
+1. Only regenerate when the service list actually changes.
+2. Ignore poll timestamps without service updates, or debounce reloads.
+3. Add a test that ensures no reload occurs on repeated identical polls.
 
 ---
 

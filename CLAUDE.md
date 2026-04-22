@@ -429,7 +429,7 @@ New installations default to the shared location for easier cross-deployment int
 ## Development
 
 ### Prerequisites
-- Go 1.21+
+- Go 1.25+
 - Docker with BuildKit
 - Access to a Cloudflare account (for testing)
 
