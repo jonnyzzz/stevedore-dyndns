@@ -47,19 +47,13 @@ func TestAccessLogFileIncludesHost(t *testing.T) {
 	}
 	defer stopContainer(containerID)
 
-	if err := waitForServer(ctx, "127.0.0.1", httpPort); err != nil {
-		t.Fatalf("server not ready: %v", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%s/", httpPort), nil)
+	// A TCP dial is satisfied by docker-proxy on Linux before Caddy has bound
+	// its listener inside the container, so we retry the HTTP request until
+	// the upstream is actually serving (or the context expires).
+	url := fmt.Sprintf("http://127.0.0.1:%s/", httpPort)
+	resp, err := getWithRetry(ctx, url, "example.test", 30*time.Second)
 	if err != nil {
-		t.Fatalf("failed to create request: %v", err)
-	}
-	req.Host = "example.test"
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("failed to send request: %v", err)
+		t.Fatalf("failed to reach Caddy: %v", err)
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
@@ -72,6 +66,34 @@ func TestAccessLogFileIncludesHost(t *testing.T) {
 	if err := waitForAccessLogEntry(t, containerID, needle, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// getWithRetry sends GET requests with a Host header until one succeeds with
+// an HTTP response, or the deadline expires.
+func getWithRetry(ctx context.Context, url, host string, timeout time.Duration) (*http.Response, error) {
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	var lastErr error
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Host = host
+
+		resp, err := client.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return nil, fmt.Errorf("no HTTP response within %s: %w", timeout, lastErr)
 }
 
 func startCaddyContainerForAccessLog(ctx context.Context, caddyfilePath string) (string, string, error) {
