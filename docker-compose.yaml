@@ -62,6 +62,22 @@ services:
       - DNS_TTL=${DNS_TTL:-}
       - CLOUDFLARE_PROXY=${CLOUDFLARE_PROXY:-false}
       - SUBDOMAIN_PREFIX=${SUBDOMAIN_PREFIX:-false}
+      - CATCHALL_SUBDOMAIN=${CATCHALL_SUBDOMAIN:-}
+
+      # MTProto dispatcher (optional). When MTPROTO_DISPATCHER=true, dyndns
+      # binds :443 and peeks SNI; FakeTLS goes to mtglib, browser traffic is
+      # forwarded to Caddy on the loopback port. See CLAUDE.md for details.
+      - MTPROTO_DISPATCHER=${MTPROTO_DISPATCHER:-false}
+      - MTPROTO_SUBDOMAINS=${MTPROTO_SUBDOMAINS:-}
+      - MTPROTO_DATA_DIR=${MTPROTO_DATA_DIR:-}
+      - MTPROTO_DISPATCHER_BIND=${MTPROTO_DISPATCHER_BIND:-}
+      - MTPROTO_CADDY_LOOPBACK=${MTPROTO_CADDY_LOOPBACK:-}
+      - MTPROTO_MAX_CONNECTIONS=${MTPROTO_MAX_CONNECTIONS:-}
+
+      # Telegram bot (optional). When TELEGRAM_BOT_TOKEN is set the bot runs
+      # and broadcasts MTProto URL posts to TELEGRAM_BOT_CHAT_IDS.
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_BOT_CHAT_IDS=${TELEGRAM_BOT_CHAT_IDS:-}
 
       # Internal paths (set by Stevedore or use defaults for local dev)
       - DYNDNS_DATA=${STEVEDORE_DATA:-./data}
