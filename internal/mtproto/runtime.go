@@ -142,6 +142,12 @@ func (r *Runtime) Start(ctx context.Context) error {
 			Concurrency:        uint(dispatcherCfg.MaxConnections),
 			DomainFrontingPort: uint(port),
 			DomainFrontingIP:   host,
+			// mtg's default tolerance is ~3 s, which rejects clients even
+			// with normal network latency + a sub-second clock skew. A real
+			// deployment saw every Telegram client attempt rejected with
+			// "timestamp … is too old 3.04 s". Bump to 30 s — matches mtg's
+			// upstream recommendation for real-world deployments.
+			TolerateTimeSkewness: 30 * time.Second,
 		})
 		if err != nil {
 			return fmt.Errorf("mtproto runtime: new proxy for %s: %w", b.FQDN, err)
