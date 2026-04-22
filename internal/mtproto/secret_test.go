@@ -133,10 +133,17 @@ func TestBinding_Fingerprint_Stable(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := NewStore(dir)
 	b, _ := store.Load("mtp", "mtp.example.com")
-	if got := b.Fingerprint(); len(got) != 8 {
-		t.Errorf("fingerprint length = %d, want 8 (value %q)", len(got), got)
+	first := b.Fingerprint()
+	if len(first) != 8 {
+		t.Errorf("fingerprint length = %d, want 8 (value %q)", len(first), first)
 	}
-	if b.Fingerprint() != b.Fingerprint() {
-		t.Error("fingerprint not stable")
+	// Reload from disk should produce an equal fingerprint: guards against
+	// serialization drift, not just function purity.
+	b2, err := store.Load("mtp", "mtp.example.com")
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := b2.Fingerprint(); got != first {
+		t.Errorf("fingerprint changed across reload: got %q, want %q", got, first)
 	}
 }
