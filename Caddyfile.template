@@ -31,74 +31,14 @@
 {{end}}
 }
 
-# Certificate configuration
-# In prefix mode: certificates for basedomain.com (parent of zone.basedomain.com)
-# In normal mode: wildcard certificate for *.domain and domain itself
-{{if .SubdomainPrefix}}
-# Prefix mode: service subdomains are direct children of {{.BaseDomain}}
-# e.g., app-zone.example.com instead of app.zone.example.com
-*.{{.BaseDomain}}, {{.Domain}} {
-{{else}}
-# Normal mode: wildcard subdomain certificate
-*.{{.Domain}}, {{.Domain}} {
-{{end}}
-    # TLS with Cloudflare DNS challenge for wildcard cert
-    tls {
-        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-{{if .CloudflareProxy}}
-        # Require Cloudflare client certificate for Authenticated Origin Pull (mTLS)
-        # This ensures only Cloudflare can connect to the origin
-        client_auth {
-            mode require_and_verify
-            trusted_ca_cert_file /etc/cloudflare/origin-pull-ca.pem
-        }
-{{end}}
-    }
-
-    # Access logs (stdout)
-    log {
-        output stdout
-        format json
-    }
-
-    # Dynamic routing based on subdomain (proxy-mode services)
-    {{range .ProxyMappings}}
-    @{{.Subdomain}} host {{.FQDN}}
-    handle @{{.Subdomain}} {
-        reverse_proxy {{.Target}} {
-            {{if .Options.Websocket}}
-            # WebSocket support - force HTTP/1.1 for proper upgrade handling
-            # Note: Caddy automatically handles WebSocket upgrade headers with HTTP/1.1
-            transport http {
-                versions 1.1
-            }
-            {{end}}
-            {{if not .Options.BufferRequests}}
-            flush_interval -1
-            {{end}}
-            # Health checks
-            health_uri {{.Options.HealthPath | default "/health"}}
-            health_interval 30s
-            health_timeout 5s
-
-            # Headers
-            header_up X-Real-IP {remote_host}
-            header_up X-Forwarded-For {remote_host}
-            header_up X-Forwarded-Proto {scheme}
-            header_up X-Forwarded-Host {host}
-        }
-    }
-    {{end}}
-
-    # Unknown Host on a known SNI → 451
-    handle {
-        respond "451 Unavailable For Legal Reasons" 451
-    }
-}
+# IMPORTANT: explicit-host site blocks come BEFORE the wildcard because Caddy
+# picks the first matching TLS connection policy in declaration order. A
+# wildcard *.domain block with `client_auth` would otherwise claim SNI values
+# that also match an explicit (direct / MTProto) site, forcing a client-cert
+# requirement on sites that shouldn't need one.
 
 # Direct-mode subdomains: served with their own Let's Encrypt cert
-# (DNS-01 via Cloudflare), no origin mTLS. Each explicit hostname is more
-# specific than the wildcard block above, so Caddy routes to it by SNI.
+# (DNS-01 via Cloudflare), no origin mTLS.
 {{range .DirectMappings}}
 {{.FQDN}} {
     tls {
@@ -186,6 +126,71 @@
     respond "451 Unavailable For Legal Reasons" 451
 }
 {{end}}
+
+# Certificate configuration
+# In prefix mode: certificates for basedomain.com (parent of zone.basedomain.com)
+# In normal mode: wildcard certificate for *.domain and domain itself
+{{if .SubdomainPrefix}}
+# Prefix mode: service subdomains are direct children of {{.BaseDomain}}
+# e.g., app-zone.example.com instead of app.zone.example.com
+*.{{.BaseDomain}}, {{.Domain}} {
+{{else}}
+# Normal mode: wildcard subdomain certificate
+*.{{.Domain}}, {{.Domain}} {
+{{end}}
+    # TLS with Cloudflare DNS challenge for wildcard cert
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+{{if .CloudflareProxy}}
+        # Require Cloudflare client certificate for Authenticated Origin Pull (mTLS)
+        # This ensures only Cloudflare can connect to the origin
+        client_auth {
+            mode require_and_verify
+            trusted_ca_cert_file /etc/cloudflare/origin-pull-ca.pem
+        }
+{{end}}
+    }
+
+    # Access logs (stdout)
+    log {
+        output stdout
+        format json
+    }
+
+    # Dynamic routing based on subdomain (proxy-mode services)
+    {{range .ProxyMappings}}
+    @{{.Subdomain}} host {{.FQDN}}
+    handle @{{.Subdomain}} {
+        reverse_proxy {{.Target}} {
+            {{if .Options.Websocket}}
+            # WebSocket support - force HTTP/1.1 for proper upgrade handling
+            # Note: Caddy automatically handles WebSocket upgrade headers with HTTP/1.1
+            transport http {
+                versions 1.1
+            }
+            {{end}}
+            {{if not .Options.BufferRequests}}
+            flush_interval -1
+            {{end}}
+            # Health checks
+            health_uri {{.Options.HealthPath | default "/health"}}
+            health_interval 30s
+            health_timeout 5s
+
+            # Headers
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-Host {host}
+        }
+    }
+    {{end}}
+
+    # Unknown Host on a known SNI → 451
+    handle {
+        respond "451 Unavailable For Legal Reasons" 451
+    }
+}
 
 # Health check endpoint (internal only, bound to localhost for security)
 http://127.0.0.1:8080 {
