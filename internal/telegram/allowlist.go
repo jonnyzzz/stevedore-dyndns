@@ -12,7 +12,7 @@ package telegram
 // Add new IDs by editing this file and redeploying; this is intentionally
 // compile-time, not config, so stevedore-param leaks cannot grant access.
 var AllowedUsers = []int64{
-	// Eugene Petrenko — primary admin (@jonnyzzz).
+	// Primary admin.
 	198430623,
 }
 
