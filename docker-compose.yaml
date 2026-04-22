@@ -79,9 +79,13 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_BOT_CHAT_IDS=${TELEGRAM_BOT_CHAT_IDS:-}
 
-      # Internal paths (set by Stevedore or use defaults for local dev)
-      - DYNDNS_DATA=${STEVEDORE_DATA:-./data}
-      - DYNDNS_LOGS=${STEVEDORE_LOGS:-./logs}
+      # Internal paths — must match the container mount points below, not
+      # the host paths. DYNDNS_DATA was previously set to ${STEVEDORE_DATA},
+      # which is the HOST path; writes from inside the container to that
+      # path landed on the ephemeral container layer, not on the persistent
+      # volume. MTProto secrets regenerating across rebuilds surfaced this.
+      - DYNDNS_DATA=/data
+      - DYNDNS_LOGS=/var/log/dyndns
 
     volumes:
       # Persistent data - certificates, DNS state
