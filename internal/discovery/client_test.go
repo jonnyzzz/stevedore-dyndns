@@ -76,6 +76,25 @@ func TestParseServiceFromLabels(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:       "with direct mode",
+			deployment: "directapp",
+			container:  "stevedore-directapp-web-1",
+			labels: map[string]string{
+				"stevedore.ingress.enabled":   "true",
+				"stevedore.ingress.subdomain": "directapp",
+				"stevedore.ingress.port":      "4000",
+				"stevedore.ingress.direct":    "true",
+			},
+			wantService: Service{
+				Deployment: "directapp",
+				Container:  "stevedore-directapp-web-1",
+				Subdomain:  "directapp",
+				Port:       4000,
+				Direct:     true,
+			},
+			wantErr: false,
+		},
+		{
 			name:       "ingress not enabled",
 			deployment: "myapp",
 			container:  "stevedore-myapp-web-1",
@@ -152,6 +171,9 @@ func TestParseServiceFromLabels(t *testing.T) {
 			}
 			if svc.HealthCheck != tt.wantService.HealthCheck {
 				t.Errorf("HealthCheck = %q, want %q", svc.HealthCheck, tt.wantService.HealthCheck)
+			}
+			if svc.Direct != tt.wantService.Direct {
+				t.Errorf("Direct = %v, want %v", svc.Direct, tt.wantService.Direct)
 			}
 		})
 	}

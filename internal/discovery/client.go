@@ -26,6 +26,11 @@ type Service struct {
 	Websocket bool `json:"websocket"`
 	// HealthCheck is the health check path (optional)
 	HealthCheck string `json:"healthCheck"`
+	// Direct selects direct-mode routing for this subdomain:
+	// grey-cloud DNS (no Cloudflare proxy), Caddy obtains its own
+	// Let's Encrypt cert via DNS-01, no origin mTLS required.
+	// Defaults to false, preserving legacy CF-proxy+mTLS behavior.
+	Direct bool `json:"direct,omitempty"`
 }
 
 // Client queries the stevedore socket API for service discovery.
@@ -67,6 +72,7 @@ type ingressConfig struct {
 	Port        int    `json:"port"`
 	Websocket   bool   `json:"websocket,omitempty"`
 	Healthcheck string `json:"healthcheck,omitempty"`
+	Direct      bool   `json:"direct,omitempty"`
 }
 
 // serviceResponse matches the stevedore API response structure.
@@ -233,6 +239,7 @@ func (c *Client) parseServices(responses []serviceResponse) []Service {
 				Port:        r.Ingress.Port,
 				Websocket:   r.Ingress.Websocket,
 				HealthCheck: r.Ingress.Healthcheck,
+				Direct:      r.Ingress.Direct,
 			}
 		} else if r.Labels != nil {
 			// Fall back to legacy labels format
@@ -279,6 +286,7 @@ func parseServiceFromLabels(deployment, container string, labels map[string]stri
 	// Get optional settings
 	websocket := labels["stevedore.ingress.websocket"] == "true"
 	healthCheck := labels["stevedore.ingress.healthcheck"]
+	direct := labels["stevedore.ingress.direct"] == "true"
 
 	return Service{
 		Deployment:  deployment,
@@ -287,6 +295,7 @@ func parseServiceFromLabels(deployment, container string, labels map[string]stri
 		Port:        port,
 		Websocket:   websocket,
 		HealthCheck: healthCheck,
+		Direct:      direct,
 	}, nil
 }
 

@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] - 2026-04-22
+
+### Added
+- **Mixed Proxy/Direct Mode**: Per-service `stevedore.ingress.direct=true` label (and matching structured-ingress field / `STEVEDORE_INGRESS_<SVC>_DIRECT` parameter) publishes a subdomain as grey-cloud (Cloudflare `Proxied=false`). Caddy serves such sites with their own Let's Encrypt cert via DNS-01 and no origin mTLS, while other subdomains keep the existing CF-proxy + authenticated-origin-pull path.
+- **Host / SNI Validation**: Unknown Host values inside the wildcard block now respond `451` instead of `404`.
+- **451 Catchall Site**: Optional `CATCHALL_SUBDOMAIN` env var enables a dedicated site (own LE cert) plus `default_sni`; any TLS handshake whose SNI does not match a configured site completes against the catchall's cert and receives a `451` response. Caddy emits an AAAA record for direct subdomains in addition to A records.
+- **Cloudflare Per-Record Proxy**: New `UpdateRecordProxied` lets callers mix orange-cloud and grey-cloud records within the same zone.
+- **Unit Tests**: Direct-mode site emission, 451 fallback, catchall default-SNI, and per-record proxied flag are covered by new tests.
+
 ## [0.9.5] - 2026-01-06
 
 ### Added

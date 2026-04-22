@@ -23,6 +23,12 @@ type Config struct {
 	AcmeEmail       string
 	SubdomainPrefix bool // Use prefix mode (app-zone.example.com instead of app.zone.example.com)
 
+	// CatchallSubdomain, when non-empty, enables a dedicated 451 site block.
+	// Any TLS handshake whose SNI does not match a configured site lands on
+	// this site's Let's Encrypt cert (via default_sni) and receives a 451.
+	// Leave empty to disable the feature (legacy behavior).
+	CatchallSubdomain string
+
 	// Fritzbox settings for TR-064/UPnP
 	FritzboxHost     string
 	FritzboxUser     string
@@ -83,6 +89,9 @@ func Load() (*Config, error) {
 
 	// Parse subdomain prefix mode (for Cloudflare Universal SSL compatibility)
 	cfg.SubdomainPrefix = parseBool(os.Getenv("SUBDOMAIN_PREFIX"))
+
+	// Parse catchall subdomain (optional; enables the 451 catchall site).
+	cfg.CatchallSubdomain = os.Getenv("CATCHALL_SUBDOMAIN")
 
 	// Parse DNS TTL (default to IP check interval in seconds, minimum 60)
 	if ttlStr := os.Getenv("DNS_TTL"); ttlStr != "" {

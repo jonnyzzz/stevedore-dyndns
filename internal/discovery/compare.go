@@ -31,5 +31,5 @@ func ServicesEqual(a, b []Service) bool {
 }
 
 func serviceKey(svc Service) string {
-	return fmt.Sprintf("%s|%d|%t|%s", svc.Subdomain, svc.Port, svc.Websocket, svc.GetHealthPath())
+	return fmt.Sprintf("%s|%d|%t|%s|%t", svc.Subdomain, svc.Port, svc.Websocket, svc.GetHealthPath(), svc.Direct)
 }

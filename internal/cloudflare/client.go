@@ -69,8 +69,16 @@ func (c *Client) validateRecordName(name string) error {
 	return fmt.Errorf("SECURITY: record name %q is outside configured domain %q (baseDomain: %q) - refusing to modify", name, c.domain, c.baseDomain)
 }
 
-// UpdateRecord creates or updates a DNS record
+// UpdateRecord creates or updates a DNS record using the client's default
+// proxy mode. Direct-mode sites should use UpdateRecordProxied with proxied=false.
 func (c *Client) UpdateRecord(ctx context.Context, name string, recordType string, content string) error {
+	return c.UpdateRecordProxied(ctx, name, recordType, content, c.proxied)
+}
+
+// UpdateRecordProxied creates or updates a DNS record with an explicit proxied
+// flag. This supports mixed-mode deployments where some subdomains go through
+// Cloudflare proxy (orange cloud) while others terminate TLS directly (grey cloud).
+func (c *Client) UpdateRecordProxied(ctx context.Context, name string, recordType string, content string, proxied bool) error {
 	// SECURITY ASSERTION: Ensure we only modify records within our domain
 	if err := c.validateRecordName(name); err != nil {
 		return err
@@ -108,7 +116,7 @@ func (c *Client) UpdateRecord(ctx context.Context, name string, recordType strin
 
 	// Cloudflare uses TTL=1 for "automatic" when proxied
 	ttl := c.ttl
-	if c.proxied {
+	if proxied {
 		ttl = 1 // Automatic TTL when proxied
 	}
 
@@ -121,13 +129,13 @@ func (c *Client) UpdateRecord(ctx context.Context, name string, recordType strin
 				Name:    name,
 				Content: content,
 				TTL:     ttl,
-				Proxied: cloudflare.BoolPtr(c.proxied),
+				Proxied: cloudflare.BoolPtr(proxied),
 			})
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update DNS record: %w", err)
 		}
-		slog.Debug("Updated DNS record", "name", name, "type", recordType, "content", content, "ttl", ttl, "proxied", c.proxied)
+		slog.Debug("Updated DNS record", "name", name, "type", recordType, "content", content, "ttl", ttl, "proxied", proxied)
 	} else {
 		// Create new record
 		record, err := withRetry(ctx, "create_dns_record", func() (cloudflare.DNSRecord, error) {
@@ -136,7 +144,7 @@ func (c *Client) UpdateRecord(ctx context.Context, name string, recordType strin
 				Name:    name,
 				Content: content,
 				TTL:     ttl,
-				Proxied: cloudflare.BoolPtr(c.proxied),
+				Proxied: cloudflare.BoolPtr(proxied),
 			})
 		})
 		if err != nil {
@@ -145,7 +153,7 @@ func (c *Client) UpdateRecord(ctx context.Context, name string, recordType strin
 		c.cacheMu.Lock()
 		c.recordCache[cacheKey] = record.ID
 		c.cacheMu.Unlock()
-		slog.Debug("Created DNS record", "name", name, "type", recordType, "content", content, "id", record.ID, "ttl", ttl, "proxied", c.proxied)
+		slog.Debug("Created DNS record", "name", name, "type", recordType, "content", content, "id", record.ID, "ttl", ttl, "proxied", proxied)
 	}
 
 	return nil

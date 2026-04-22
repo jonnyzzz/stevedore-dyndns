@@ -15,6 +15,11 @@
         level {{.LogLevel}}
         output stdout
     }
+{{if .CatchallFQDN}}
+    # Requests whose SNI does not match any known site land on the catchall's
+    # Let's Encrypt cert so the TLS handshake succeeds and we can answer 451.
+    default_sni {{.CatchallFQDN}}
+{{end}}
 }
 
 # Certificate configuration
@@ -47,8 +52,8 @@
         format json
     }
 
-    # Dynamic routing based on subdomain
-    {{range .Mappings}}
+    # Dynamic routing based on subdomain (proxy-mode services)
+    {{range .ProxyMappings}}
     @{{.Subdomain}} host {{.FQDN}}
     handle @{{.Subdomain}} {
         reverse_proxy {{.Target}} {
@@ -76,11 +81,63 @@
     }
     {{end}}
 
-    # Default handler for unmatched subdomains
+    # Unknown Host on a known SNI → 451
     handle {
-        respond "Not Found" 404
+        respond "451 Unavailable For Legal Reasons" 451
     }
 }
+
+# Direct-mode subdomains: served with their own Let's Encrypt cert
+# (DNS-01 via Cloudflare), no origin mTLS. Each explicit hostname is more
+# specific than the wildcard block above, so Caddy routes to it by SNI.
+{{range .DirectMappings}}
+{{.FQDN}} {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+
+    log {
+        output stdout
+        format json
+    }
+
+    reverse_proxy {{.Target}} {
+        {{if .Options.Websocket}}
+        transport http {
+            versions 1.1
+        }
+        {{end}}
+        {{if not .Options.BufferRequests}}
+        flush_interval -1
+        {{end}}
+        health_uri {{.Options.HealthPath | default "/health"}}
+        health_interval 30s
+        health_timeout 5s
+
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+    }
+}
+{{end}}
+
+{{if .CatchallFQDN}}
+# 451 catchall: owns a real LE cert served for unknown SNI via default_sni,
+# and responds 451 for every request that reaches this site.
+{{.CatchallFQDN}} {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+
+    log {
+        output stdout
+        format json
+    }
+
+    respond "451 Unavailable For Legal Reasons" 451
+}
+{{end}}
 
 # Health check endpoint (internal only, bound to localhost for security)
 http://127.0.0.1:8080 {

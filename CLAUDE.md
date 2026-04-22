@@ -74,6 +74,7 @@ This service acts as an ingress controller for Stevedore-managed services, provi
 | `LOG_LEVEL` | No | Log level: debug, info, warn, error (default: `info`) |
 | `CLOUDFLARE_PROXY` | No | Enable Cloudflare proxy mode with mTLS (default: `false`) |
 | `SUBDOMAIN_PREFIX` | No | Use prefix mode for subdomains (default: `false`) |
+| `CATCHALL_SUBDOMAIN` | No | Name of the 451 catchall subdomain (e.g. `catchall`). Enables a dedicated site with its own LE cert, used as `default_sni` so any unknown SNI receives a 451 response instead of a TLS error. Leave empty to disable. |
 | `DNS_TTL` | No | DNS record TTL in seconds (default: IP check interval, min 60) |
 | `STEVEDORE_SOCKET` | No | Path to stevedore query socket (default: `/var/run/stevedore/query.sock`) |
 | `STEVEDORE_TOKEN` | No | Auth token for service discovery (get via `stevedore token get dyndns`) |
@@ -578,6 +579,7 @@ services:
 | `stevedore.ingress.port` | Yes | Container port to route to |
 | `stevedore.ingress.websocket` | No | Enable WebSocket support (default: `false`) |
 | `stevedore.ingress.healthcheck` | No | Health check path (default: `/health`) |
+| `stevedore.ingress.direct` | No | Serve this subdomain as grey-cloud (Cloudflare `Proxied=false`) with Caddy-issued Let's Encrypt cert via DNS-01; origin mTLS is skipped. Default: `false` (proxied + mTLS). |
 
 ### Method 2: Stevedore Parameters
 

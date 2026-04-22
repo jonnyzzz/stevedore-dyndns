@@ -36,7 +36,14 @@ type TemplateData struct {
 	SubdomainPrefix bool   // Use prefix mode (subdomain-basedomain.parent)
 	BaseDomain      string // Parent domain in prefix mode (e.g., example.com)
 	CloudflareProxy bool   // Use Cloudflare proxy mode with mTLS
-	Mappings        []MappingData
+	// CatchallFQDN, when non-empty, enables the 451 catchall site block
+	// and is also used as default_sni in the global Caddy options.
+	CatchallFQDN  string
+	ProxyMappings []MappingData // Subdomains routed via the CF-proxy+mTLS block
+	DirectMappings []MappingData // Subdomains served directly (own LE cert, no mTLS)
+	// Mappings is kept for legacy template/test use: it is the concatenation of
+	// ProxyMappings followed by DirectMappings.
+	Mappings []MappingData
 }
 
 // MappingData represents a mapping in the template
@@ -45,6 +52,8 @@ type MappingData struct {
 	FQDN      string // Full domain name (e.g., app-zone.example.com)
 	Target    string
 	Options   mapping.MappingOptions
+	// Direct marks this subdomain as direct-mode (own LE cert, no mTLS).
+	Direct bool
 }
 
 // New creates a new Caddy configuration generator
@@ -141,6 +150,7 @@ func (g *Generator) GenerateContent() (string, error) {
 
 	// Prepare template data - combine mappings and discovered services
 	mappingData := g.collectMappings()
+	proxyMappings, directMappings := splitMappings(mappingData)
 
 	data := TemplateData{
 		Domain:          g.cfg.Domain,
@@ -149,6 +159,9 @@ func (g *Generator) GenerateContent() (string, error) {
 		SubdomainPrefix: g.cfg.SubdomainPrefix,
 		BaseDomain:      g.cfg.GetBaseDomain(),
 		CloudflareProxy: g.cfg.CloudflareProxy,
+		CatchallFQDN:    g.catchallFQDN(),
+		ProxyMappings:   proxyMappings,
+		DirectMappings:  directMappings,
 		Mappings:        mappingData,
 	}
 
@@ -164,6 +177,8 @@ func (g *Generator) GenerateContent() (string, error) {
 // GetTemplateData returns the template data that would be used for generation.
 // This is useful for testing template rendering.
 func (g *Generator) GetTemplateData() TemplateData {
+	mappings := g.collectMappings()
+	proxy, direct := splitMappings(mappings)
 	return TemplateData{
 		Domain:          g.cfg.Domain,
 		AcmeEmail:       g.cfg.AcmeEmail,
@@ -171,8 +186,33 @@ func (g *Generator) GetTemplateData() TemplateData {
 		SubdomainPrefix: g.cfg.SubdomainPrefix,
 		BaseDomain:      g.cfg.GetBaseDomain(),
 		CloudflareProxy: g.cfg.CloudflareProxy,
-		Mappings:        g.collectMappings(),
+		CatchallFQDN:    g.catchallFQDN(),
+		ProxyMappings:   proxy,
+		DirectMappings:  direct,
+		Mappings:        mappings,
 	}
+}
+
+// splitMappings separates a flat mapping list into proxy-mode and direct-mode
+// slices, preserving relative order within each group.
+func splitMappings(all []MappingData) (proxy, direct []MappingData) {
+	for _, m := range all {
+		if m.Direct {
+			direct = append(direct, m)
+		} else {
+			proxy = append(proxy, m)
+		}
+	}
+	return
+}
+
+// catchallFQDN returns the fully-qualified domain name for the 451 catchall
+// site, or the empty string when the feature is disabled.
+func (g *Generator) catchallFQDN() string {
+	if g.cfg.CatchallSubdomain == "" {
+		return ""
+	}
+	return g.cfg.GetSubdomainFQDN(g.cfg.CatchallSubdomain)
 }
 
 // GetActiveSubdomains returns a list of all currently active subdomains
@@ -204,6 +244,22 @@ func (g *Generator) GetActiveSubdomains() []string {
 	return result
 }
 
+// IsSubdomainDirect returns true when the given subdomain was discovered with
+// the direct-mode flag set. Unknown subdomains (including YAML mappings) return
+// false. Callers that need the catchall treated as direct should check
+// separately via CatchallSubdomain.
+func (g *Generator) IsSubdomainDirect(subdomain string) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	for _, svc := range g.discoveredServices {
+		if svc.Subdomain == subdomain {
+			return svc.Direct
+		}
+	}
+	return false
+}
+
 // collectMappings gathers all mappings from both YAML files and discovery
 func (g *Generator) collectMappings() []MappingData {
 	seen := make(map[string]bool)
@@ -225,6 +281,7 @@ func (g *Generator) collectMappings() []MappingData {
 				Websocket:  svc.Websocket,
 				HealthPath: svc.GetHealthPath(),
 			},
+			Direct: svc.Direct,
 		})
 	}
 	g.mu.RUnlock()

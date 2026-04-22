@@ -51,6 +51,11 @@ func TestServicesEqual_DifferentFields(t *testing.T) {
 			a:    []Service{{Subdomain: "app", Port: 8080, HealthCheck: "/health"}},
 			b:    []Service{{Subdomain: "app", Port: 8080, HealthCheck: "/healthz"}},
 		},
+		{
+			name: "different direct flag",
+			a:    []Service{{Subdomain: "app", Port: 8080, Direct: false}},
+			b:    []Service{{Subdomain: "app", Port: 8080, Direct: true}},
+		},
 	}
 
 	for _, tt := range tests {

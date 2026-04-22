@@ -295,13 +295,16 @@ func updateIPAndDNS(
 	}
 }
 
-// updateSubdomainRecords creates/updates individual subdomain DNS records
+// updateSubdomainRecords creates/updates individual subdomain DNS records.
 // This is required when Cloudflare proxy is enabled because Cloudflare Universal SSL
-// doesn't cover wildcard subdomains (*.domain.com)
+// doesn't cover wildcard subdomains (*.domain.com).
 //
-// In proxy mode, we only create A records (IPv4) - Cloudflare automatically provides
-// IPv6 connectivity to clients via their edge network. This avoids issues where the
-// origin doesn't have IPv6 port forwarding configured.
+// Mixed mode: subdomains marked direct in stevedore discovery are published as
+// grey-cloud (Proxied=false) so Caddy can terminate TLS with its own LE cert.
+// Other subdomains keep orange-cloud (Proxied=true) behavior, and IPv6 is
+// handled by Cloudflare edge automatically — only A records are emitted for
+// proxied subdomains. Direct subdomains additionally receive AAAA records when
+// an IPv6 address is known, because clients connect to the origin directly.
 func updateSubdomainRecords(
 	ctx context.Context,
 	cfg *config.Config,
@@ -312,6 +315,21 @@ func updateSubdomainRecords(
 	// Get active subdomains from Caddy config
 	activeSubdomains := caddyGen.GetActiveSubdomains()
 
+	// The 451 catchall always behaves as direct-mode: its own LE cert, grey-cloud.
+	catchallSub := cfg.CatchallSubdomain
+	if catchallSub != "" {
+		found := false
+		for _, s := range activeSubdomains {
+			if s == catchallSub {
+				found = true
+				break
+			}
+		}
+		if !found {
+			activeSubdomains = append(activeSubdomains, catchallSub)
+		}
+	}
+
 	// Create a set for quick lookup (stores normalized FQDNs for case-insensitive comparison)
 	activeFQDNs := make(map[string]bool)
 	for _, sub := range activeSubdomains {
@@ -320,28 +338,34 @@ func updateSubdomainRecords(
 	}
 
 	slog.Info("Updating subdomain DNS records",
-		"proxy_mode", true,
 		"prefix_mode", cfg.SubdomainPrefix,
 		"active_subdomains", len(activeSubdomains),
+		"catchall", catchallSub,
 	)
 
-	// Update records for each active subdomain
-	// In proxy mode: only A records - Cloudflare handles IPv6 for clients automatically
 	for _, subdomain := range activeSubdomains {
 		fqdn := cfg.GetSubdomainFQDN(subdomain)
+		direct := caddyGen.IsSubdomainDirect(subdomain) || subdomain == catchallSub
+		proxied := !direct
 
 		if ipv4 != "" {
-			if err := cfClient.UpdateRecord(ctx, fqdn, "A", ipv4); err != nil {
-				slog.Error("Failed to update subdomain A record", "subdomain", subdomain, "fqdn", fqdn, "error", err)
+			if err := cfClient.UpdateRecordProxied(ctx, fqdn, "A", ipv4, proxied); err != nil {
+				slog.Error("Failed to update subdomain A record", "subdomain", subdomain, "fqdn", fqdn, "direct", direct, "error", err)
 			} else {
-				slog.Info("Updated subdomain A record", "subdomain", subdomain, "fqdn", fqdn)
+				slog.Info("Updated subdomain A record", "subdomain", subdomain, "fqdn", fqdn, "direct", direct)
 			}
 		}
 
-		// Note: We intentionally skip AAAA records for subdomains in proxy mode.
-		// Cloudflare's proxy automatically provides IPv6 connectivity to clients
-		// while communicating with origin over IPv4 only. This avoids issues where
-		// home routers don't have IPv6 port forwarding configured.
+		// AAAA records only make sense when the client reaches the origin directly.
+		// In proxied mode Cloudflare provides IPv6 to clients while connecting to
+		// the origin over IPv4; adding an AAAA would expose the origin's IPv6.
+		if direct && ipv6 != "" {
+			if err := cfClient.UpdateRecordProxied(ctx, fqdn, "AAAA", ipv6, false); err != nil {
+				slog.Error("Failed to update subdomain AAAA record", "subdomain", subdomain, "fqdn", fqdn, "error", err)
+			} else {
+				slog.Info("Updated subdomain AAAA record", "subdomain", subdomain, "fqdn", fqdn)
+			}
+		}
 	}
 
 	// Clean up old subdomain records that are no longer active (terraform-like reconciliation)
