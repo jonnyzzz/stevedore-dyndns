@@ -414,10 +414,12 @@ func (a *HTTPAPI) call(ctx context.Context, method string, params url.Values, ou
 	if resp.StatusCode >= 500 {
 		return fmt.Errorf("telegram %s: HTTP %d", method, resp.StatusCode)
 	}
+	// Accept unknown fields: Telegram returns many incidental fields beyond
+	// what we model (e.g. User.language_code, Chat.title, etc.) and those
+	// vary across API versions. Strict decoding would break every tiny
+	// upstream change.
 	dec := json.NewDecoder(resp.Body)
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
-		// Re-read body for error context is awkward; report the decoder error.
 		if errors.Is(err, io.EOF) {
 			return fmt.Errorf("telegram %s: empty body (HTTP %d)", method, resp.StatusCode)
 		}
