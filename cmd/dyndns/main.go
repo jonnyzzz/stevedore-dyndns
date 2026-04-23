@@ -444,6 +444,14 @@ func updateIPAndDNS(
 		return
 	}
 
+	// When DISABLE_IPV6 is set, honor the flag by dropping the detected
+	// address before any AAAA reconciliation path runs. Useful when the
+	// upstream router's WAN IPv6 is not routable to this host.
+	if cfg.DisableIPv6 && ipv6 != "" {
+		slog.Debug("DISABLE_IPV6 set, ignoring detected IPv6 address", "ipv6", ipv6)
+		ipv6 = ""
+	}
+
 	slog.Info("Detected IP addresses",
 		"ipv4", ipv4,
 		"ipv6", ipv6,
@@ -493,6 +501,32 @@ func updateIPAndDNS(
 			} else {
 				slog.Info("Updated wildcard AAAA record", "domain", "*."+cfg.Domain, "ip", ipv6)
 			}
+		}
+	}
+
+	// If IPv6 is disabled, ensure no AAAA records are left over from prior
+	// runs: delete them idempotently for the root, the wildcard, and every
+	// currently-active subdomain. DeleteRecord is a no-op when the record
+	// doesn't exist.
+	if cfg.DisableIPv6 {
+		purgeAAAARecords(ctx, cfg, cfClient, caddyGen)
+	}
+}
+
+// purgeAAAARecords deletes AAAA records that dyndns may have published in
+// earlier runs. Called only when DISABLE_IPV6 is set. DeleteRecord is
+// idempotent, so missing records are silently ignored.
+func purgeAAAARecords(ctx context.Context, cfg *config.Config, cfClient *cloudflare.Client, caddyGen *caddy.Generator) {
+	targets := []string{cfg.Domain, "*." + cfg.Domain}
+	for _, sub := range caddyGen.GetActiveSubdomains() {
+		targets = append(targets, cfg.GetSubdomainFQDN(sub))
+	}
+	if cfg.CatchallSubdomain != "" {
+		targets = append(targets, cfg.GetSubdomainFQDN(cfg.CatchallSubdomain))
+	}
+	for _, fqdn := range targets {
+		if err := cfClient.DeleteRecord(ctx, fqdn, "AAAA"); err != nil {
+			slog.Warn("Failed to delete stale AAAA record", "fqdn", fqdn, "error", err)
 		}
 	}
 }

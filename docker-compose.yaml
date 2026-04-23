@@ -64,6 +64,11 @@ services:
       - SUBDOMAIN_PREFIX=${SUBDOMAIN_PREFIX:-false}
       - CATCHALL_SUBDOMAIN=${CATCHALL_SUBDOMAIN:-}
 
+      # DISABLE_IPV6: when "true", suppress all AAAA publishing and delete
+      # any prior AAAA records dyndns managed. Useful when the router's
+      # WAN IPv6 doesn't actually forward to this host.
+      - DISABLE_IPV6=${DISABLE_IPV6:-false}
+
       # MTProto dispatcher (optional). When MTPROTO_DISPATCHER=true, dyndns
       # binds :443 and peeks SNI; FakeTLS goes to mtglib, browser traffic is
       # forwarded to Caddy on the loopback port. See CLAUDE.md for details.

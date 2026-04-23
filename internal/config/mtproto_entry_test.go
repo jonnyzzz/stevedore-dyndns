@@ -1,6 +1,49 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
+
+// TestLoad_DisableIPv6 exercises the DISABLE_IPV6 env-var flag. The value
+// must survive through Load so downstream AAAA-suppression paths see it.
+func TestLoad_DisableIPv6(t *testing.T) {
+	defaults := map[string]string{
+		"CLOUDFLARE_API_TOKEN": "tok",
+		"CLOUDFLARE_ZONE_ID":   "zone",
+		"DOMAIN":               "example.com",
+		"ACME_EMAIL":           "a@example.com",
+	}
+	for k, v := range defaults {
+		t.Setenv(k, v)
+	}
+
+	cases := []struct {
+		val  string
+		want bool
+	}{
+		{"", false},
+		{"false", false},
+		{"true", true},
+		{"1", true},
+		{"yes", true},
+	}
+	for _, tc := range cases {
+		t.Run("DISABLE_IPV6="+tc.val, func(t *testing.T) {
+			os.Unsetenv("DISABLE_IPV6")
+			if tc.val != "" {
+				t.Setenv("DISABLE_IPV6", tc.val)
+			}
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.DisableIPv6 != tc.want {
+				t.Errorf("DisableIPv6 = %v, want %v", cfg.DisableIPv6, tc.want)
+			}
+		})
+	}
+}
 
 func TestResolveMTProtoEntry(t *testing.T) {
 	tests := []struct {

@@ -75,6 +75,7 @@ This service acts as an ingress controller for Stevedore-managed services, provi
 | `CLOUDFLARE_PROXY` | No | Enable Cloudflare proxy mode with mTLS (default: `false`) |
 | `SUBDOMAIN_PREFIX` | No | Use prefix mode for subdomains (default: `false`) |
 | `CATCHALL_SUBDOMAIN` | No | Name of the 451 catchall subdomain (e.g. `catchall`). Enables a dedicated site with its own LE cert, used as `default_sni` so any unknown SNI receives a 451 response instead of a TLS error. Leave empty to disable. |
+| `DISABLE_IPV6` | No | When `true`, suppress all AAAA publishing and delete any prior AAAA records dyndns has managed. Useful when the upstream router's WAN IPv6 address does not forward to this host (e.g. a Fritzbox WAN IPv6 that serves the router's own MyFRITZ admin cert). |
 | `MTPROTO_DISPATCHER` | No | When `true`, dyndns binds `:443` and runs an MTProto FakeTLS dispatcher; Caddy moves to the configured loopback port. Leave empty/`false` to keep Caddy on `:443` as before. |
 | `MTPROTO_SUBDOMAINS` | No | Comma-separated list of subdomain labels (e.g. `mtp,tg`) bound to MTProto. Each gets a grey-cloud A/AAAA record, its own LE cert, a `respond "OK" 200` decoy site, and an auto-generated secret. |
 | `TELEGRAM_BOT_TOKEN` | No | Bot API token from BotFather. When set, the bot long-polls `getUpdates`, handles `/status` and `/rotate` from allow-listed users in DMs, and broadcasts secret events to `TELEGRAM_BOT_CHAT_IDS`. Write-only in groups. |

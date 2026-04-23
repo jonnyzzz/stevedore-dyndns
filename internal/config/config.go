@@ -76,6 +76,14 @@ type Config struct {
 	// TelegramBotChatIDs.
 	TelegramBotAllowedUsers []int64
 
+	// DisableIPv6, when true, suppresses all AAAA record publishing and
+	// deletes any previously-published AAAA records for managed FQDNs on
+	// the next reconciliation. Useful when the upstream router's WAN IPv6
+	// address is not actually routable to this host (e.g. a Fritzbox WAN
+	// IPv6 that serves the router's own admin cert rather than the
+	// origin). IPv4 records are unaffected.
+	DisableIPv6 bool
+
 	// Fritzbox settings for TR-064/UPnP
 	FritzboxHost     string
 	FritzboxUser     string
@@ -168,6 +176,8 @@ func Load() (*Config, error) {
 	} else {
 		cfg.TelegramBotAllowedUsers = ids
 	}
+
+	cfg.DisableIPv6 = parseBool(os.Getenv("DISABLE_IPV6"))
 
 	// Parse DNS TTL (default to IP check interval in seconds, minimum 60)
 	if ttlStr := os.Getenv("DNS_TTL"); ttlStr != "" {
