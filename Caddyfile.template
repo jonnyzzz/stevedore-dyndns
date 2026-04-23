@@ -33,9 +33,9 @@
 
 # IMPORTANT: explicit-host site blocks come BEFORE the wildcard because Caddy
 # picks the first matching TLS connection policy in declaration order. A
-# wildcard *.domain block with `client_auth` would otherwise claim SNI values
-# that also match an explicit (direct / MTProto) site, forcing a client-cert
-# requirement on sites that shouldn't need one.
+# wildcard *.domain block with an mTLS requirement would otherwise claim SNI
+# values that also match an explicit (direct / MTProto) site, forcing a
+# client-cert requirement on sites that shouldn't need one.
 
 # Direct-mode subdomains: served with their own Let's Encrypt cert
 # (DNS-01 via Cloudflare), no origin mTLS.
@@ -45,9 +45,9 @@
 # non-mTLS site (with each site's SNI in the match list). Without a
 # differentiator, the adapter merges all non-mTLS sites into a single empty
 # catch-all policy that loses the SNI-match walk to the wildcard "*.domain"
-# block's mTLS policy — explicit direct subdomains would then pick up the
-# wildcard's client_auth and fail handshake with "certificate required".
-# We deliberately avoid any `client_auth` option here because TLS 1.3's
+# block's mTLS policy — explicit direct subdomains would then inherit the
+# wildcard's cert requirement and fail handshake with "certificate required".
+# We deliberately avoid any cert-auth option here because TLS 1.3's
 # CertificateRequest message would surface a "choose a certificate" prompt
 # in user agents that auto-offer personal client certs from the OS keyring.
 {{range .DirectMappings}}
