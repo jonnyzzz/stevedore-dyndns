@@ -1,0 +1,13 @@
+# syntax=docker/dockerfile:1
+
+FROM golang:1.26.2-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
+
+# Cache module downloads for faster test runs
+COPY go.mod go.sum ./
+RUN go mod download

@@ -21,6 +21,7 @@
 
 # Test binary
 *.test
+!Dockerfile.test
 
 # Output of coverage
 *.out

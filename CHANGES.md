@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.1] - 2026-04-24
+
+### Changed
+- Pinned all Go build/test images to Go 1.26.2. The production Docker build
+  and the integration-test image now use the same Go 1.26 line.
+
 ## [0.12.0] - 2026-04-22
 
 ### Added

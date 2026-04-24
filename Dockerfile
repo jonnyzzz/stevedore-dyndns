@@ -6,7 +6,7 @@ RUN xcaddy build \
     --with github.com/caddy-dns/cloudflare
 
 # Stage 2: Build Go service
-FROM golang:1.26-alpine AS go-builder
+FROM golang:1.26.2-alpine AS go-builder
 
 # Install git for version info
 RUN apk add --no-cache git
